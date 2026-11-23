@@ -17,7 +17,7 @@ final class FloatingPanel: NSPanel {
         self.contentViewController = contentViewController
         self.isOpaque = false
         self.backgroundColor = .clear
-        self.hasShadow = true
+        self.hasShadow = false
         self.level = .statusBar
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         self.isMovableByWindowBackground = false
@@ -111,13 +111,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hostingController.view.layoutSubtreeIfNeeded()
         let fittingSize = hostingController.view.fittingSize
-        let panelWidth = Metrics.popoverWidth
-        let panelHeight = min(680, max(260, fittingSize.height))
-
+        let inset = Metrics.shadowInset
         let screenFrame = buttonWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        let maxHeight = max(420, screenFrame.height - 24)
+        let panelWidth = Metrics.popoverWidth + inset * 2
+        let panelHeight = min(maxHeight, max(300, fittingSize.height))
+
         var x = buttonFrame.midX - panelWidth / 2.0
-        x = max(screenFrame.minX + 8, min(x, screenFrame.maxX - panelWidth - 8))
-        let y = buttonFrame.minY - panelHeight - 6
+        x = max(screenFrame.minX + 4 - inset, min(x, screenFrame.maxX - panelWidth + inset - 4))
+        let y = buttonFrame.minY - panelHeight + inset - 6
 
         panel.setFrame(NSRect(x: x, y: y, width: panelWidth, height: panelHeight), display: true)
     }
@@ -175,10 +177,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             rootView: SettingsView(store: store, preferences: preferences)
         )
         let window = NSWindow(contentViewController: hosting)
-        window.title = "Antigravity Usage Monitor"
-        window.styleMask = [.titled, .closable]
+        window.title = ""
+        window.styleMask = [.titled, .closable, .fullSizeContentView]
         window.titlebarAppearsTransparent = true
-        window.backgroundColor = NSColor(hex: 0x232322)
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.appearance = NSAppearance(named: .darkAqua)
         window.isReleasedWhenClosed = false
         window.center()

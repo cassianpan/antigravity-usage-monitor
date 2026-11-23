@@ -20,7 +20,7 @@ A minimal, native macOS menu bar app (Swift 6 / macOS 15+) for monitoring **Goog
   - Automatically backs up `~/.gemini/antigravity-cli/settings.json` before configuring the bridge.
   - Uses `stack_with_default: true` when no custom `statusLine` exists, or chains your existing custom `statusLine` script without breaking it. Reversible with one click.
 - **Native Menu Bar UX**
-  - Menu-bar-only app (`LSUIElement`), customizable status bar columns, color-coded utilization, per-section **Detailed / Simple / Hidden** display modes, collapsible headers, and Login Item support.
+  - Menu-bar-only app (`LSUIElement`), showing only `5H` percentage by default with optional clickable columns (`WEEK` / `CACHE` / `TODAY` / `CTX`), translucent dark frosted-glass floating panel, English/Chinese language toggle, per-section **Detailed / Simple / Hidden** modes, and Login Item support.
 
 ## Requirements
 

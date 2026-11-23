@@ -123,6 +123,7 @@ final class AppPreferences {
     }
 
     private enum Keys {
+        static let prefsVersion = "prefs.schemaVersion"
         static let language = "general.language"
         static let showFiveHour = "menubar.showFiveHour"
         static let showWeekly = "menubar.showWeekly"
@@ -141,9 +142,9 @@ final class AppPreferences {
         defaults.register(defaults: [
             Keys.language: AppLanguage.system.rawValue,
             Keys.showFiveHour: true,
-            Keys.showWeekly: true,
+            Keys.showWeekly: false,
             Keys.showCacheRate: false,
-            Keys.showTodayCost: true,
+            Keys.showTodayCost: false,
             Keys.showContext: false,
             Keys.processesDensity: SectionDensity.simple.rawValue,
             Keys.quotaDensity: SectionDensity.detailed.rawValue,
@@ -152,6 +153,16 @@ final class AppPreferences {
             Keys.refreshInterval: 30,
             Keys.spendTab: SpendWindowTab.week.rawValue,
         ])
+
+        // One-time migration: align default menu bar to 5H-only (matching claude-usage-monitor).
+        if defaults.integer(forKey: Keys.prefsVersion) < 2 {
+            defaults.set(true, forKey: Keys.showFiveHour)
+            defaults.set(false, forKey: Keys.showWeekly)
+            defaults.set(false, forKey: Keys.showTodayCost)
+            defaults.set(false, forKey: Keys.showCacheRate)
+            defaults.set(false, forKey: Keys.showContext)
+            defaults.set(2, forKey: Keys.prefsVersion)
+        }
 
         self.language = AppLanguage(rawValue: defaults.string(forKey: Keys.language) ?? "") ?? .system
         self.showFiveHourInMenuBar = defaults.bool(forKey: Keys.showFiveHour)

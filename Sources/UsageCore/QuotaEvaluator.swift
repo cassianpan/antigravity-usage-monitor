@@ -111,6 +111,12 @@ public struct QuotaEvaluator: Sendable {
             if order(lhs.windowKind) != order(rhs.windowKind) {
                 return order(lhs.windowKind) < order(rhs.windowKind)
             }
+            // Prefer Gemini primary buckets ahead of 3P / other buckets.
+            let lhsGemini = lhs.bucketId.lowercased().contains("gemini")
+            let rhsGemini = rhs.bucketId.lowercased().contains("gemini")
+            if lhsGemini != rhsGemini {
+                return lhsGemini
+            }
             return lhs.bucketId < rhs.bucketId
         }
 
@@ -196,22 +202,27 @@ public struct QuotaEvaluator: Sendable {
         let group: String
         if lower.contains("gemini") {
             group = "Gemini"
+        } else if lower.contains("3p") || lower.contains("third") {
+            group = "第三方模型 (3P)"
         } else if lower.contains("claude") {
             group = "Claude"
         } else if lower.contains("gpt") {
             group = "GPT"
         } else {
             group = bucketId
+                .replacingOccurrences(of: "-5h", with: "", options: .caseInsensitive)
+                .replacingOccurrences(of: "-weekly", with: "", options: .caseInsensitive)
                 .replacingOccurrences(of: "-", with: " ")
                 .replacingOccurrences(of: "_", with: " ")
+                .trimmingCharacters(in: .whitespaces)
                 .capitalized
         }
 
         switch kind {
         case .fiveHour:
-            return "\(group) · 5 小时"
+            return "5 小时 · \(group)"
         case .weekly:
-            return "\(group) · 周限额"
+            return "本周 · \(group)"
         case .other:
             return group
         }

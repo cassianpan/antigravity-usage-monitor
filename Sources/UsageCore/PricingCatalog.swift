@@ -40,7 +40,16 @@ public struct PricingCatalog: Sendable {
         // Published list prices (USD / 1M tokens).
         // Unknown models intentionally return nil (Decision D5: never fabricate prices).
         self.rules = [
-            // Gemini 2.5 / 3 / 4 Flash & Neon families
+            // Gemini 4 family (2026 published paid-tier pricing)
+            Rule(keywords: ["gemini", "neon"], price: ModelPrice(inputPerMillion: 3.00, cacheReadPerMillion: 0.15, outputPerMillion: 15.00)),
+            Rule(keywords: ["gemini", "hydrogen"], price: ModelPrice(inputPerMillion: 1.50, cacheReadPerMillion: 0.075, outputPerMillion: 7.50)),
+            Rule(keywords: ["gemini", "argon"], price: ModelPrice(inputPerMillion: 2.00, cacheReadPerMillion: 0.10, outputPerMillion: 10.00)),
+            Rule(keywords: ["gemini", "carbon"], price: ModelPrice(inputPerMillion: 2.00, cacheReadPerMillion: 0.10, outputPerMillion: 10.00)),
+            // Gemini 3.x family
+            Rule(keywords: ["gemini-3", "flash-lite"], price: ModelPrice(inputPerMillion: 0.25, cacheReadPerMillion: 0.025, outputPerMillion: 1.50)),
+            Rule(keywords: ["gemini-3", "flash"], price: ModelPrice(inputPerMillion: 0.75, cacheReadPerMillion: 0.075, outputPerMillion: 3.75)),
+            Rule(keywords: ["gemini-3", "pro"], price: ModelPrice(inputPerMillion: 2.00, cacheReadPerMillion: 0.20, outputPerMillion: 12.00)),
+            // Gemini 2.5 / generic Flash & Pro families
             Rule(keywords: ["gemini", "flash-lite"], price: ModelPrice(inputPerMillion: 0.10, cacheReadPerMillion: 0.025, outputPerMillion: 0.40)),
             Rule(keywords: ["gemini", "flash"], price: ModelPrice(inputPerMillion: 0.30, cacheReadPerMillion: 0.075, outputPerMillion: 2.50)),
             Rule(keywords: ["gemini", "pro"], price: ModelPrice(inputPerMillion: 1.25, cacheReadPerMillion: 0.3125, outputPerMillion: 10.00)),

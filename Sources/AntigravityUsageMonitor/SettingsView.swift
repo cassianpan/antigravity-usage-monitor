@@ -9,13 +9,10 @@ struct SettingsView: View {
         let l10n = preferences.l10n
         VStack(spacing: 0) {
             topTabBar(l10n: l10n)
-
-            Rectangle()
-                .fill(Palette.divider)
-                .frame(height: 1)
+            Hairline()
 
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 20) {
                     switch preferences.selectedSettingsTab {
                     case .menuBar:
                         menuBarContent(l10n: l10n)
@@ -27,29 +24,36 @@ struct SettingsView: View {
                         generalContent(l10n: l10n)
                     }
                 }
-                .padding(20)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 20)
             }
         }
-        .frame(width: 480, height: 420)
-        .background(Palette.settingsBackground)
+        .frame(width: 520, height: 460)
+        .background {
+            ZStack {
+                GlassEffect(material: .hudWindow)
+                Color(hex: 0x1C1B1A).opacity(0.84)
+            }
+            .ignoresSafeArea()
+        }
         .preferredColorScheme(.dark)
         .onAppear {
             preferences.syncLaunchAtLoginStatus()
         }
     }
 
-    // MARK: - Top Icon Tab Bar (matching hero.png)
+    // MARK: - Top Icon Tab Bar (fused into translucent glass titlebar)
 
     private func topTabBar(l10n: L10n) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             tabButton(.menuBar, icon: "menubar.rectangle", title: l10n.tabMenuBar)
             tabButton(.panel, icon: "rectangle.3.group", title: l10n.tabPanel)
             tabButton(.data, icon: "externaldrive", title: l10n.tabData)
             tabButton(.general, icon: "slider.horizontal.3", title: l10n.tabGeneral)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 12)
+        .padding(.top, 26)
+        .padding(.bottom, 10)
     }
 
     private func tabButton(_ tab: SettingsTab, icon: String, title: String) -> some View {
@@ -59,33 +63,32 @@ struct SettingsView: View {
         } label: {
             VStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 15, weight: .regular))
+                    .font(.system(size: 16, weight: .regular))
                 Text(title)
                     .font(.system(size: 11, weight: active ? .medium : .regular))
             }
-            .foregroundStyle(active ? Palette.text : Palette.secondary)
-            .frame(width: 78, height: 50)
+            .foregroundStyle(active ? Palette.text : Palette.tertiary)
+            .frame(width: 72, height: 48)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(active ? Palette.controlSelected : Color.clear)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(active ? Color.white.opacity(0.09) : Color.clear)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Menu Bar Tab (with live preview bar + clickable value pills)
+    // MARK: - Menu Bar Tab
 
     private func menuBarContent(l10n: L10n) -> some View {
         let zh = l10n.zh
         let columns = store.menuBarColumns()
-        return VStack(alignment: .leading, spacing: 18) {
+        return VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(zh ? "菜单栏预览" : "Menu bar")
+                Text(zh ? "菜单栏" : "Menu bar")
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(Palette.secondary)
 
-                // Live macOS menu bar preview capsule
                 HStack(spacing: 12) {
                     Spacer()
                     Capsule()
@@ -123,11 +126,13 @@ struct SettingsView: View {
                 )
             }
 
+            Hairline()
+
             VStack(alignment: .leading, spacing: 8) {
-                Text(zh ? "菜单栏指标" : "Menu bar values")
+                Text(zh ? "菜单栏显示项" : "Menu bar values")
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(Palette.text)
-                Text(zh ? "点亮的指标会显示在菜单栏中，点击即可切换。" : "Lit values appear in the menu bar. Click to toggle.")
+                Text(zh ? "亮起的数值会显示在菜单栏，点击即可开启或关闭（默认仅显示 5H）。" : "Lit values appear in the menu bar. Click to toggle (5H only by default).")
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.secondary)
 
@@ -169,7 +174,7 @@ struct SettingsView: View {
                         accentHex: 0xE3A24B
                     )
                 }
-                .padding(.vertical, 6)
+                .padding(.vertical, 7)
                 .background(Palette.previewBar, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -215,8 +220,11 @@ struct SettingsView: View {
                 .foregroundStyle(Palette.secondary)
 
             densityRow(title: l10n.processes, selection: $preferences.processesSectionDensity, zh: zh)
+            Hairline()
             densityRow(title: l10n.limits, selection: $preferences.quotaSectionDensity, zh: zh)
+            Hairline()
             densityRow(title: l10n.context, selection: $preferences.contextSectionDensity, zh: zh)
+            Hairline()
             densityRow(title: l10n.spend, selection: $preferences.spendSectionDensity, zh: zh)
         }
     }
@@ -249,27 +257,26 @@ struct SettingsView: View {
             .padding(2)
             .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
-        .padding(.vertical, 4)
     }
 
     // MARK: - Data & CLI Sync Tab
 
     private func dataContent(l10n: L10n) -> some View {
         let zh = l10n.zh
-        return VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(zh ? "agy CLI 官方额度同步" : "agy CLI Official Limits Sync")
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(Palette.text)
+        return VStack(alignment: .leading, spacing: 16) {
+            QuietNoticeRow(
+                systemImage: "terminal",
+                title: zh ? "agy CLI 官方额度同步" : "agy CLI Official Limits Sync",
+                subtitle: l10n.cliSyncSubtitle,
+                actionTitle: l10n.openTerminalConnect,
+                actionIcon: "chevron.forward.square",
+                onAction: { store.openTerminalToConnectCLI() }
+            )
 
-                Text(l10n.noSnapshotHint)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Palette.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Hairline()
 
             HStack {
-                Text(zh ? "当前桥接状态" : "Bridge status")
+                Text(zh ? "桥接状态" : "Bridge status")
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.secondary)
                 Spacer()
@@ -290,35 +297,18 @@ struct SettingsView: View {
                 }
             }
 
-            HStack(spacing: 10) {
+            if store.bridgeStatus.isInstalled {
                 Button {
-                    store.openTerminalToConnectCLI()
+                    store.uninstallBridge()
                 } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "terminal")
-                        Text(l10n.openTerminalConnect)
-                    }
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Palette.accent, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    Text(zh ? "移除桥接并还原 settings.json" : "Disconnect & restore settings.json")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Palette.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
                 .buttonStyle(.plain)
-
-                if store.bridgeStatus.isInstalled {
-                    Button {
-                        store.uninstallBridge()
-                    } label: {
-                        Text(zh ? "移除并还原配置" : "Disconnect & Restore")
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Palette.secondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                }
             }
 
             if let feedback = store.bridgeFeedback {
@@ -328,9 +318,7 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Rectangle()
-                .fill(Palette.divider)
-                .frame(height: 1)
+            Hairline()
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(zh ? "本地数据路径（纯只读）" : "Local data paths (read-only)")
@@ -379,6 +367,8 @@ struct SettingsView: View {
                 .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
 
+            Hairline()
+
             HStack {
                 Text(zh ? "刷新频率" : "Refresh interval")
                     .font(.system(size: 12.5))
@@ -396,6 +386,8 @@ struct SettingsView: View {
                     store.restartTimer()
                 }
             }
+
+            Hairline()
 
             HStack {
                 VStack(alignment: .leading, spacing: 2) {

@@ -24,16 +24,14 @@ extension NSColor {
     }
 }
 
-/// 1:1 aligned with claude-usage-monitor dark charcoal surfaces + Antigravity Blue (#4F8CFF) accent.
+/// 1:1 aligned with claude-usage-monitor translucent dark glass + Antigravity Blue (#4F8CFF) accent.
 enum Palette {
     static let accentHex: UInt32 = 0x4F8CFF
     static let accent = Color(hex: accentHex)
 
-    static let panelBackground = Color(hex: 0x2B2B2A)
-    static let settingsBackground = Color(hex: 0x232322)
     static let controlSurface = Color.white.opacity(0.065)
     static let controlSelected = Color.white.opacity(0.14)
-    static let previewBar = Color(hex: 0x1D1D1C)
+    static let previewBar = Color.black.opacity(0.35)
 
     static let text = Color.white.opacity(0.92)
     static let secondary = Color.white.opacity(0.58)
@@ -49,11 +47,10 @@ enum Palette {
     static let critical = Color(hex: 0xE5584F)
     static let live = Color(hex: 0x6CC08B)
 
-    // Low-saturation token breakdown palette (single brand hue + neutral grays)
+    // Low-saturation token breakdown palette
     static let cacheRead = accent
     static let input = Color.white.opacity(0.62)
     static let output = Color.white.opacity(0.36)
-    static let cacheSavings = Color(hex: 0x6CC08B)
 
     static func levelHex(for fraction: Double, overPace: Bool = false) -> UInt32 {
         if overPace || fraction >= 0.90 { return 0xE5584F }
@@ -71,8 +68,164 @@ enum Palette {
 enum Metrics {
     static let popoverWidth: CGFloat = 356
     static let popoverCorner: CGFloat = 14
+    static let shadowInset: CGFloat = 18
     static let padding: CGFloat = 16
 }
+
+// MARK: - Native macOS Frosted Glass (1:1 aligned with Surfaces.swift)
+
+struct GlassEffect: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .popover
+    var cornerRadius: CGFloat = 0
+
+    func makeNSView(context: Context) -> MaskedEffectView {
+        let view = MaskedEffectView()
+        view.material = material
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.appearance = NSAppearance(named: .darkAqua)
+        view.cornerRadius = cornerRadius
+        return view
+    }
+
+    func updateNSView(_ view: MaskedEffectView, context: Context) {
+        view.material = material
+        view.cornerRadius = cornerRadius
+    }
+}
+
+final class MaskedEffectView: NSVisualEffectView {
+    var cornerRadius: CGFloat = 0 {
+        didSet { if oldValue != cornerRadius { updateMask() } }
+    }
+
+    private func updateMask() {
+        guard cornerRadius > 0 else {
+            maskImage = nil
+            return
+        }
+        let inset = ceil(cornerRadius * 1.6)
+        let rect = CGRect(x: 0, y: 0, width: inset * 2 + 1, height: inset * 2 + 1)
+        let path = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).path(in: rect).cgPath
+        let image = NSImage(size: rect.size, flipped: false) { _ in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            ctx.addPath(path)
+            ctx.setFillColor(NSColor.black.cgColor)
+            ctx.fillPath()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: inset, left: inset, bottom: inset, right: inset)
+        image.resizingMode = .stretch
+        maskImage = image
+    }
+}
+
+/// Translucent dark glass panel background + subtle dim + 0.5pt border + soft drop shadow.
+struct PanelBackground: View {
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Metrics.popoverCorner, style: .continuous)
+        ZStack {
+            shape.fill(Color.black.opacity(0.32))
+                .shadow(color: .black.opacity(0.32), radius: 14, x: 0, y: 8)
+            GlassEffect(material: .popover, cornerRadius: Metrics.popoverCorner)
+            shape.fill(Color.black.opacity(0.20))
+            shape.strokeBorder(Color.white.opacity(0.11), lineWidth: 0.5)
+        }
+    }
+}
+
+struct Hairline: View {
+    var body: some View {
+        Rectangle()
+            .fill(Palette.divider)
+            .frame(height: 0.5)
+    }
+}
+
+/// Plan badge matching claude-usage-monitor's PlanTag (Pro outlined, Max tinted, Ultra solid).
+struct PlanTagView: View {
+    let rawTier: String
+
+    private static let tracking: CGFloat = 0.8
+
+    var body: some View {
+        let parsed = parseTier(rawTier)
+        Text(parsed.label)
+            .font(.system(size: 9.5, weight: .semibold))
+            .tracking(Self.tracking)
+            .foregroundStyle(parsed.text)
+            .padding(.leading, 6)
+            .padding(.trailing, 6 - Self.tracking)
+            .frame(height: 17)
+            .background(Capsule().fill(parsed.fill))
+            .overlay(Capsule().strokeBorder(parsed.stroke, lineWidth: 1))
+            .fixedSize()
+    }
+
+    private func parseTier(_ raw: String) -> (label: String, fill: Color, stroke: Color, text: Color) {
+        let lower = raw.lowercased()
+        if lower.contains("ultra") {
+            return ("ULTRA", Palette.accent, .clear, Color(hex: 0x0A1930))
+        }
+        if lower.contains("max") {
+            return ("MAX", Palette.accent.opacity(0.22), .clear, Color(hex: 0x89B4FF))
+        }
+        if lower.contains("pro") {
+            return ("PRO", .clear, Palette.accent.opacity(0.65), Color(hex: 0x89B4FF))
+        }
+        return (raw.uppercased(), Color.white.opacity(0.08), .clear, Palette.secondary)
+    }
+}
+
+/// Quiet icon-box hint row matching Claude Usage Monitor's empty/login notice blocks.
+struct QuietNoticeRow: View {
+    let systemImage: String
+    let title: String
+    let subtitle: String
+    var actionTitle: String? = nil
+    var actionIcon: String = "terminal"
+    var onAction: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.white.opacity(0.06))
+                Image(systemName: systemImage)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Palette.secondary)
+            }
+            .frame(width: 30, height: 30)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Palette.text)
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let actionTitle, let onAction {
+                    Button(action: onAction) {
+                        HStack(spacing: 5) {
+                            Image(systemName: actionIcon)
+                                .font(.system(size: 10.5))
+                            Text(actionTitle)
+                                .font(.system(size: 11.5, weight: .medium))
+                        }
+                        .foregroundStyle(Palette.text)
+                        .padding(.top, 4)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+// MARK: - Localization
 
 enum AppLanguage: String, CaseIterable, Identifiable {
     case system = "system"
@@ -105,45 +258,51 @@ struct L10n {
 
     var appTitle: String { zh ? "Antigravity 用量" : "Antigravity usage" }
     var processes: String { zh ? "活跃进程" : "Processes" }
-    var limits: String { zh ? "额度" : "Limits" }
+    var limits: String { zh ? "用量限额" : "Limits" }
     var context: String { zh ? "活跃上下文" : "Context window" }
-    var spend: String { zh ? "花费与缓存" : "Spend" }
-    var thisMonth: String { zh ? "本月" : "This month" }
-    var thisWeek: String { zh ? "本周" : "This week" }
-    var today: String { zh ? "今日" : "Today" }
-    var tokens: String { "Tokens" }
+    var spend: String { zh ? "本期消耗" : "Spend" }
+    var thisMonth: String { zh ? "本月周期" : "This month" }
+    var thisWeek: String { zh ? "本周期" : "This week" }
+    var today: String { zh ? "每日" : "Today" }
+    var tokens: String { zh ? "总 Tokens" : "Tokens" }
     var requests: String { zh ? "请求" : "Requests" }
+    var todayShort: String { zh ? "今日" : "Today" }
     var input: String { zh ? "新增输入" : "Input" }
     var output: String { zh ? "输出" : "Output" }
     var cacheRead: String { zh ? "缓存命中" : "Cache read" }
     var cacheHitRate: String { zh ? "缓存命中率" : "Cache hit rate" }
     var savedPrefix: String { zh ? "省 " : "Saved " }
     var settings: String { zh ? "设置..." : "Settings..." }
-    var refresh: String { zh ? "刷新" : "Refresh" }
+    var refresh: String { zh ? "立即刷新" : "Refresh" }
     var quit: String { zh ? "退出" : "Quit" }
-    var openTerminalConnect: String { zh ? "在终端打开 agy 登录并同步" : "Open Terminal to sign in & sync agy" }
-    var noSnapshotHint: String {
+    var cliSyncTitle: String { zh ? "等待 agy CLI 同步额度" : "Waiting for agy CLI sync" }
+    var cliSyncSubtitle: String {
         zh
-            ? "打开终端运行 agy 登录并执行一次 /usage，官方 5 小时与每周额度会自动同步到这里。"
-            : "Sign in via agy CLI in Terminal and run /usage once to sync official 5-hour & weekly limits."
+            ? "打开终端登录并运行一次 /usage 后，官方限额会自动恢复"
+            : "Sign in via Terminal and run /usage once to sync official limits"
     }
+    var openTerminalConnect: String { zh ? "在终端中登录 agy CLI" : "Sign in with agy CLI in Terminal" }
     var unpricedBadge: String { zh ? "含未定价模型" : "Includes unpriced" }
     var unpricedLabel: String { zh ? "未定价" : "Unpriced" }
     var resetsIn: String { zh ? "重置倒计时 " : "Resets in " }
     var resetDone: String { zh ? "已重置" : "Reset" }
     var safeLine: String { zh ? "安全线 " : "Safe line " }
-    var syncedPrefix: String { zh ? "同步于 " : "Synced " }
-    var noActiveContext: String { zh ? "暂无活跃 agy CLI 会话" : "No active agy CLI session" }
+    var syncedSuffix: String { zh ? "同步" : "ago" }
+    var contextIdleTitle: String { zh ? "当前没有活跃的 agy 会话" : "No active agy session" }
+    var contextIdleSubtitle: String {
+        zh
+            ? "在 agy CLI 对话后，这里显示当前上下文窗口占比"
+            : "Active context window usage appears here while using agy CLI"
+    }
     var noActiveProcess: String { zh ? "当前无运行中的 agy / Antigravity 进程" : "No running agy / Antigravity processes" }
     var tabMenuBar: String { zh ? "菜单栏" : "Menu Bar" }
     var tabPanel: String { zh ? "面板" : "Panel" }
-    var tabData: String { zh ? "CLI 与数据" : "Data" }
+    var tabData: String { zh ? "数据" : "Data" }
     var tabGeneral: String { zh ? "通用" : "General" }
 }
 
-// MARK: - Reference-aligned Components (Zero @State macro for CLT compatibility)
+// MARK: - Gauges & Charts
 
-/// Thin progress bar with Safe Line mark. Portion past safe line turns critical red.
 struct ThinBar: View {
     let fraction: Double
     let color: Color
@@ -194,7 +353,6 @@ struct ThinBar: View {
     }
 }
 
-/// Minimalist 14-day bar chart matching claude-usage-monitor Spend section.
 struct MiniBarsView: View {
     let values: [Double]
     let labels: [String]
@@ -212,15 +370,14 @@ struct MiniBarsView: View {
                             ? Palette.accent
                             : (val > 0 ? Color.white.opacity(0.28) : Color.white.opacity(0.08))
                     )
-                    .frame(width: 5, height: val > 0 ? max(3, CGFloat(ratio) * 32) : 2)
+                    .frame(width: 5, height: val > 0 ? max(3, CGFloat(ratio) * 30) : 2)
                     .help(idx < labels.count ? labels[idx] : "")
             }
         }
-        .frame(height: 34, alignment: .bottom)
+        .frame(height: 32, alignment: .bottom)
     }
 }
 
-/// Antigravity geometric brand mark (clean vector, tinted with brand accent).
 struct BrandMarkView: View {
     var size: CGFloat = 14
     var color: Color = Palette.accent

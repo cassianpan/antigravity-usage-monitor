@@ -12,50 +12,38 @@ struct PanelView: View {
         VStack(spacing: 0) {
             headerBar(l10n: l10n)
 
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 0) {
-                    if preferences.processesSectionDensity != .hidden {
-                        processesRow(l10n: l10n)
-                        panelDivider
-                    }
+            VStack(alignment: .leading, spacing: 0) {
+                if preferences.processesSectionDensity != .hidden {
+                    processesRow(l10n: l10n)
+                    panelDivider
+                }
 
-                    if preferences.quotaSectionDensity != .hidden {
-                        limitsSection(l10n: l10n)
-                        panelDivider
-                    }
+                if preferences.quotaSectionDensity != .hidden {
+                    limitsSection(l10n: l10n)
+                    panelDivider
+                }
 
-                    if preferences.contextSectionDensity != .hidden {
-                        contextSection(l10n: l10n)
-                        panelDivider
-                    }
+                if preferences.contextSectionDensity != .hidden {
+                    contextSection(l10n: l10n)
+                    panelDivider
+                }
 
-                    if preferences.spendSectionDensity != .hidden {
-                        spendSection(l10n: l10n)
-                    }
+                if preferences.spendSectionDensity != .hidden {
+                    spendSection(l10n: l10n)
                 }
             }
-            .frame(maxHeight: 590)
 
             panelDivider
             footerBar(l10n: l10n)
         }
         .frame(width: Metrics.popoverWidth)
-        .background(
-            RoundedRectangle(cornerRadius: Metrics.popoverCorner, style: .continuous)
-                .fill(Palette.panelBackground)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Metrics.popoverCorner, style: .continuous)
-                .stroke(Color.white.opacity(0.09), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: Metrics.popoverCorner, style: .continuous))
+        .background(PanelBackground())
+        .padding(Metrics.shadowInset)
         .preferredColorScheme(.dark)
     }
 
     private var panelDivider: some View {
-        Rectangle()
-            .fill(Palette.divider)
-            .frame(height: 1)
+        Hairline()
             .padding(.horizontal, Metrics.padding)
     }
 
@@ -72,33 +60,31 @@ struct PanelView: View {
             Spacer()
 
             if let tier = store.officialReport.planTier, !tier.isEmpty {
-                Text(tier)
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(Palette.secondary)
+                PlanTagView(rawTier: tier)
             }
         }
         .padding(.horizontal, Metrics.padding)
-        .padding(.top, 14)
-        .padding(.bottom, 10)
+        .padding(.top, 13)
+        .padding(.bottom, 9)
     }
 
     // MARK: - Processes Row
 
     private func processesRow(l10n: L10n) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             Button {
                 preferences.processesExpanded.toggle()
             } label: {
                 HStack(spacing: 5) {
                     Text(l10n.processes)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(Palette.secondary)
                     Image(systemName: preferences.processesExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Palette.tertiary)
                     Spacer()
                     Text("\(store.runningProcesses.count)")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(Palette.secondary)
                 }
                 .contentShape(Rectangle())
@@ -111,7 +97,7 @@ struct PanelView: View {
                         .font(.system(size: 10.5))
                         .foregroundStyle(Palette.tertiary)
                 } else {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 3) {
                         ForEach(store.runningProcesses) { proc in
                             HStack(spacing: 6) {
                                 Circle()
@@ -132,13 +118,13 @@ struct PanelView: View {
             }
         }
         .padding(.horizontal, Metrics.padding)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Limits Section
 
     private func limitsSection(l10n: L10n) -> some View {
-        VStack(alignment: .leading, spacing: 11) {
+        VStack(alignment: .leading, spacing: 9) {
             Button {
                 preferences.limitsCollapsed.toggle()
             } label: {
@@ -148,7 +134,9 @@ struct PanelView: View {
                         .foregroundStyle(Palette.secondary)
                     Spacer()
                     if let age = store.officialReport.staleAgeSeconds {
-                        Text("\(l10n.syncedPrefix)\(UsageFormatter.relativeAge(age))")
+                        let ageText = UsageFormatter.relativeAge(age)
+                        let label = l10n.zh ? "\(ageText)同步" : "Synced \(ageText)"
+                        Text(store.officialReport.isStale && l10n.zh ? "\(label) · 建议刷新" : label)
                             .font(.system(size: 10.5))
                             .foregroundStyle(store.officialReport.isStale ? Palette.warning : Palette.tertiary)
                     }
@@ -159,53 +147,44 @@ struct PanelView: View {
 
             if !preferences.limitsCollapsed {
                 if !store.officialReport.hasSnapshot || store.officialReport.buckets.isEmpty {
-                    VStack(alignment: .leading, spacing: 9) {
-                        Text(l10n.noSnapshotHint)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Palette.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        Button {
-                            store.openTerminalToConnectCLI()
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "terminal")
-                                    .font(.system(size: 11, weight: .medium))
-                                Text(l10n.openTerminalConnect)
-                                    .font(.system(size: 11.5, weight: .medium))
-                            }
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 7)
-                            .background(Palette.accent, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-
-                        if let feedback = store.bridgeFeedback {
-                            Text(feedback)
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(Palette.tertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
+                    QuietNoticeRow(
+                        systemImage: "terminal",
+                        title: l10n.cliSyncTitle,
+                        subtitle: l10n.cliSyncSubtitle,
+                        actionTitle: l10n.openTerminalConnect,
+                        actionIcon: "chevron.forward.square",
+                        onAction: { store.openTerminalToConnectCLI() }
+                    )
                 } else {
-                    VStack(spacing: 12) {
+                    VStack(spacing: 9) {
                         ForEach(store.officialReport.buckets) { bucket in
                             limitRow(bucket: bucket, l10n: l10n, isSimple: preferences.quotaSectionDensity == .simple)
                         }
+                    }
+
+                    if store.officialReport.isStale {
+                        QuietNoticeRow(
+                            systemImage: "terminal",
+                            title: l10n.zh ? "CLI 快照已有一段时间未更新" : "CLI snapshot is stale",
+                            subtitle: l10n.cliSyncSubtitle,
+                            actionTitle: l10n.openTerminalConnect,
+                            actionIcon: "chevron.forward.square",
+                            onAction: { store.openTerminalToConnectCLI() }
+                        )
+                        .padding(.top, 4)
                     }
                 }
             }
         }
         .padding(.horizontal, Metrics.padding)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 
     private func limitRow(bucket: QuotaBucketEvaluation, l10n: L10n, isSimple: Bool) -> some View {
         let levelColor = Palette.levelColor(for: bucket.usedFraction, overPace: bucket.isOverPace)
         let tooltip = limitTooltip(bucket: bucket, l10n: l10n)
 
-        return VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
                 Text(bucket.displayName)
                     .font(.system(size: 12.5, weight: .regular))
@@ -230,7 +209,7 @@ struct PanelView: View {
                     if bucket.isResetElapsed {
                         Text(l10n.resetDone)
                             .font(.system(size: 10.5))
-                            .foregroundStyle(Palette.safeGreen)
+                            .foregroundStyle(Palette.tertiary)
                     } else if let secs = bucket.remainingSecondsUntilReset {
                         Text("\(l10n.resetsIn)\(UsageFormatter.countdown(secs))")
                             .font(.system(size: 10.5))
@@ -261,7 +240,12 @@ struct PanelView: View {
     // MARK: - Active Context Window Section
 
     private func contextSection(l10n: L10n) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let ctx = store.officialReport.contextWindow
+        let usedPct = max(0, min(100, ctx?.usedPercentage ?? 0))
+        let usedTokens = (ctx?.totalInputTokens ?? 0) + (ctx?.totalOutputTokens ?? 0)
+        let hasActiveUsage = ctx != nil && (usedTokens > 0 || usedPct > 0)
+
+        return VStack(alignment: .leading, spacing: 7) {
             Button {
                 preferences.contextCollapsed.toggle()
             } label: {
@@ -270,7 +254,7 @@ struct PanelView: View {
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(Palette.secondary)
                     Spacer()
-                    if let modelName = store.officialReport.activeModelName {
+                    if let modelName = store.officialReport.activeModelName, hasActiveUsage {
                         HStack(spacing: 5) {
                             Circle()
                                 .fill(Palette.live)
@@ -287,18 +271,15 @@ struct PanelView: View {
             .buttonStyle(.plain)
 
             if !preferences.contextCollapsed {
-                if let ctx = store.officialReport.contextWindow {
-                    let usedPct = max(0, min(100, ctx.usedPercentage ?? 0))
+                if hasActiveUsage, let ctx {
                     let usedFrac = usedPct / 100.0
-                    let usedTokens = (ctx.totalInputTokens ?? 0) + (ctx.totalOutputTokens ?? 0)
-
                     HStack(alignment: .lastTextBaseline) {
                         HStack(alignment: .lastTextBaseline, spacing: 3) {
                             Text(String(format: "%.1f", usedPct))
-                                .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 22, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(Palette.text)
                             Text("%")
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: 11.5, weight: .medium))
                                 .foregroundStyle(Palette.secondary)
                         }
                         Spacer()
@@ -317,17 +298,19 @@ struct PanelView: View {
                         )
                     }
                 } else {
-                    Text(l10n.noActiveContext)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Palette.tertiary)
+                    QuietNoticeRow(
+                        systemImage: "waveform.path.ecg",
+                        title: l10n.contextIdleTitle,
+                        subtitle: l10n.contextIdleSubtitle
+                    )
                 }
             }
         }
         .padding(.horizontal, Metrics.padding)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 
-    // MARK: - Spend & Cache Section (1:1 aligned with claude-usage-monitor)
+    // MARK: - Spend & Cache Section
 
     private func spendSection(l10n: L10n) -> some View {
         let summary: UsageWindowSummary = {
@@ -338,7 +321,7 @@ struct PanelView: View {
             }
         }()
 
-        return VStack(alignment: .leading, spacing: 11) {
+        return VStack(alignment: .leading, spacing: 9) {
             Button {
                 preferences.spendCollapsed.toggle()
             } label: {
@@ -381,9 +364,9 @@ struct PanelView: View {
 
                 // Big cost + 14-day mini bars side by side
                 HStack(alignment: .bottom) {
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(UsageFormatter.currency(summary.estimatedCostUSD))
-                            .font(.system(size: 26, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 25, weight: .semibold, design: .monospaced))
                             .foregroundStyle(Palette.text)
 
                         if summary.hasUnpricedModels {
@@ -415,7 +398,7 @@ struct PanelView: View {
                     Spacer()
                     inlineStat(label: l10n.requests, value: "\(summary.requestCount)")
                     Spacer()
-                    inlineStat(label: l10n.today, value: UsageFormatter.currency(store.localReport.today.estimatedCostUSD))
+                    inlineStat(label: l10n.todayShort, value: UsageFormatter.currency(store.localReport.today.estimatedCostUSD))
                 }
 
                 // Token breakdown columns with colored dots
@@ -426,7 +409,7 @@ struct PanelView: View {
                 }
 
                 // Cache hit rate bar
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(l10n.cacheHitRate)
                             .font(.system(size: 12))
@@ -449,11 +432,11 @@ struct PanelView: View {
                     )
                 }
 
-                // Per-model breakdown (detailed mode)
+                // Per-model breakdown
                 if preferences.spendSectionDensity == .detailed, !store.localReport.byModel.isEmpty {
                     let weekTotalTokens = max(1, store.localReport.byModel.reduce(0) { $0 + $1.totalTokens })
-                    VStack(spacing: 6) {
-                        ForEach(store.localReport.byModel.prefix(4)) { model in
+                    VStack(spacing: 5) {
+                        ForEach(store.localReport.byModel.prefix(3)) { model in
                             let share = Double(model.totalTokens) / Double(weekTotalTokens)
                             HStack(spacing: 8) {
                                 Text(model.displayName)
@@ -461,29 +444,29 @@ struct PanelView: View {
                                     .foregroundStyle(Palette.secondary)
                                     .lineLimit(1)
                                 Spacer()
-                                Text(UsageFormatter.percentage(share))
+                                Text(UsageFormatter.percentageOneDecimal(share))
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundStyle(Palette.tertiary)
                                 if let cost = model.estimatedCostUSD {
                                     Text(UsageFormatter.currency(cost))
                                         .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                                         .foregroundStyle(Palette.text)
-                                        .frame(minWidth: 52, alignment: .trailing)
+                                        .frame(minWidth: 54, alignment: .trailing)
                                 } else {
                                     Text(l10n.unpricedLabel)
                                         .font(.system(size: 10.5))
                                         .foregroundStyle(Palette.warning)
-                                        .frame(minWidth: 52, alignment: .trailing)
+                                        .frame(minWidth: 54, alignment: .trailing)
                                 }
                             }
                         }
                     }
-                    .padding(.top, 2)
+                    .padding(.top, 1)
                 }
             }
         }
         .padding(.horizontal, Metrics.padding)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 
     private func inlineStat(label: String, value: String) -> some View {
@@ -498,7 +481,7 @@ struct PanelView: View {
     }
 
     private func tokenDotColumn(dot: Color, label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Circle()
                     .fill(dot)
@@ -514,7 +497,7 @@ struct PanelView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Footer (3-way bottom bar matching claude-usage-monitor)
+    // MARK: - Footer
 
     private func footerBar(l10n: L10n) -> some View {
         HStack {
@@ -562,6 +545,6 @@ struct PanelView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, Metrics.padding)
-        .padding(.vertical, 11)
+        .padding(.vertical, 10)
     }
 }
