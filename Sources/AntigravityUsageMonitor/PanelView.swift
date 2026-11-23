@@ -406,15 +406,32 @@ struct PanelView: View {
             }
         }()
 
+        let needsBillingDayPrompt = preferences.selectedSpendTab == .month && activePeriod == nil
+
         return VStack(alignment: .leading, spacing: 9) {
-            Button {
-                preferences.spendCollapsed.toggle()
-            } label: {
-                HStack {
+            HStack {
+                Button {
+                    preferences.spendCollapsed.toggle()
+                } label: {
                     Text(l10n.spend)
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(Palette.secondary)
-                    Spacer()
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                if needsBillingDayPrompt {
+                    Button {
+                        preferences.selectedSettingsTab = .general
+                        onOpenSettings()
+                    } label: {
+                        Text(l10n.zh ? "设置订阅日…" : "Set billing day…")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(Palette.accent)
+                    }
+                    .buttonStyle(.plain)
+                } else {
                     Text(periodHeaderText)
                         .font(.system(size: 10.5, design: .monospaced))
                         .foregroundStyle(Palette.tertiary)
@@ -425,9 +442,7 @@ struct PanelView: View {
                             ])
                         }
                 }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
 
             if !preferences.spendCollapsed {
                 // Dark capsule segmented control (full-area hit target + hover + smooth transition)

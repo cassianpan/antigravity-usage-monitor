@@ -30,13 +30,20 @@ public struct UsageAggregator: Sendable {
         }
         let weekPeriod = makePeriodInfo(start: weekStart, end: weekEnd, now: now, fallbackTotalDays: 7)
 
-        let monthBounds = resolveBillingMonthBounds(now: now, billingDay: billingDay)
-        let monthPeriod = makePeriodInfo(start: monthBounds.start, end: monthBounds.end, now: now, fallbackTotalDays: 30)
+        let monthBounds = resolveBillingMonthBounds(
+            now: now,
+            billingDay: billingDay,
+            clockReference: officialWeeklyResetTime
+        )
+        let monthPeriod = monthBounds.map {
+            makePeriodInfo(start: $0.start, end: $0.end, now: now, fallbackTotalDays: 30)
+        }
 
         let todayRecords = records.filter { $0.timestamp >= startOfToday && $0.timestamp <= now }
         let fiveHourRecords = records.filter { $0.timestamp >= fiveHoursAgo && $0.timestamp <= now }
         let weekRecords = records.filter { $0.timestamp >= weekStart && $0.timestamp <= now }
-        let monthRecords = records.filter { $0.timestamp >= monthBounds.start && $0.timestamp <= now }
+        let monthStartForRecords = monthBounds?.start ?? now.addingTimeInterval(-30 * 24 * 3600)
+        let monthRecords = records.filter { $0.timestamp >= monthStartForRecords && $0.timestamp <= now }
 
         let todaySummary = summarize(todayRecords)
         let fiveHourSummary = summarize(fiveHourRecords)
@@ -59,35 +66,45 @@ public struct UsageAggregator: Sendable {
         )
     }
 
-    private func resolveBillingMonthBounds(now: Date, billingDay: Int?) -> (start: Date, end: Date) {
+    private func resolveBillingMonthBounds(now: Date, billingDay: Int?, clockReference: Date?) -> (start: Date, end: Date)? {
+        guard let rawDay = billingDay, (1...31).contains(rawDay) else {
+            return nil
+        }
+
         let comps = calendar.dateComponents([.year, .month, .day], from: now)
         let year = comps.year ?? 2026
         let month = comps.month ?? 1
 
-        guard let rawDay = billingDay, (1...31).contains(rawDay) else {
-            // Natural calendar month fallback
-            let start = calendar.date(from: DateComponents(year: year, month: month, day: 1)) ?? calendar.startOfDay(for: now)
-            let nextMonth = calendar.date(byAdding: .month, value: 1, to: start) ?? start.addingTimeInterval(30 * 86400)
-            return (start, nextMonth.addingTimeInterval(-1))
-        }
+        // Align billing clock with official weekly reset clock (matching claude-usage-monitor).
+        let clock = clockReference.map { calendar.dateComponents([.hour, .minute, .second], from: $0) }
+        let hour = clock?.hour ?? 0
+        let minute = clock?.minute ?? 0
+        let second = clock?.second ?? 0
 
-        func clampedDate(year: Int, month: Int, day: Int) -> Date {
+        func clampedAnchor(year: Int, month: Int, day: Int) -> Date {
             let firstOfMonth = calendar.date(from: DateComponents(year: year, month: month, day: 1)) ?? now
             let range = calendar.range(of: .day, in: .month, for: firstOfMonth) ?? 1..<29
             let clampedDay = min(day, range.count)
-            return calendar.date(from: DateComponents(year: year, month: month, day: clampedDay)) ?? firstOfMonth
+            return calendar.date(from: DateComponents(
+                year: year,
+                month: month,
+                day: clampedDay,
+                hour: hour,
+                minute: minute,
+                second: second
+            )) ?? firstOfMonth
         }
 
-        let thisMonthAnchor = clampedDate(year: year, month: month, day: rawDay)
+        let thisMonthAnchor = clampedAnchor(year: year, month: month, day: rawDay)
         if now >= thisMonthAnchor {
             let nextMonthDate = calendar.date(byAdding: .month, value: 1, to: DateComponents(calendar: calendar, year: year, month: month, day: 1).date ?? now) ?? now
             let nextComps = calendar.dateComponents([.year, .month], from: nextMonthDate)
-            let nextAnchor = clampedDate(year: nextComps.year ?? year, month: nextComps.month ?? month, day: rawDay)
+            let nextAnchor = clampedAnchor(year: nextComps.year ?? year, month: nextComps.month ?? month, day: rawDay)
             return (thisMonthAnchor, nextAnchor.addingTimeInterval(-1))
         } else {
             let prevMonthDate = calendar.date(byAdding: .month, value: -1, to: DateComponents(calendar: calendar, year: year, month: month, day: 1).date ?? now) ?? now
             let prevComps = calendar.dateComponents([.year, .month], from: prevMonthDate)
-            let prevAnchor = clampedDate(year: prevComps.year ?? year, month: prevComps.month ?? month, day: rawDay)
+            let prevAnchor = clampedAnchor(year: prevComps.year ?? year, month: prevComps.month ?? month, day: rawDay)
             return (prevAnchor, thisMonthAnchor.addingTimeInterval(-1))
         }
     }
