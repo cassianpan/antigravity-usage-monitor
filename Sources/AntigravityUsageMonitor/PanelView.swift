@@ -339,12 +339,15 @@ struct PanelView: View {
             .buttonStyle(.plain)
 
             if !preferences.spendCollapsed {
-                // Dark capsule segmented control
+                // Dark capsule segmented control (full-area hit target + smooth transition)
                 HStack(spacing: 2) {
                     ForEach(SpendWindowTab.allCases) { tab in
                         let selected = preferences.selectedSpendTab == tab
                         Button {
-                            preferences.selectedSpendTab = tab
+                            guard preferences.selectedSpendTab != tab else { return }
+                            withAnimation(.easeOut(duration: 0.14)) {
+                                preferences.selectedSpendTab = tab
+                            }
                         } label: {
                             Text(tab.label(l10n: l10n))
                                 .font(.system(size: 11.5, weight: selected ? .medium : .regular))
@@ -355,6 +358,7 @@ struct PanelView: View {
                                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                                         .fill(selected ? Palette.controlSelected : Color.clear)
                                 )
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }

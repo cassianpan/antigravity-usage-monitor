@@ -96,7 +96,7 @@ struct SettingsView: View {
                         .frame(width: 14, height: 3)
 
                     HStack(spacing: columns.count == 1 ? 5 : 8) {
-                        BrandMarkView(size: 12, color: Palette.accent)
+                        BrandMarkView(size: 15, color: Palette.accent)
                         if columns.count == 1, let only = columns.first {
                             Text(only.value)
                                 .font(.system(size: 12, weight: .semibold, design: .monospaced))

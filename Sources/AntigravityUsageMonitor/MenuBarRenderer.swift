@@ -8,14 +8,14 @@ enum MenuBarRenderer {
     @MainActor
     static func render(columns: [MenuBarColumnItem]) -> NSImage {
         let height: CGFloat = 22
-        let iconSize: CGFloat = 13
+        let iconSize: CGFloat = 16
         let leftPadding: CGFloat = 4
         let rightPadding: CGFloat = 4
 
         // Single-column compact mode: omit the redundant "5H" caption.
         if columns.count == 1, let only = columns.first {
             let gap: CGFloat = 5
-            let valFont = NSFont.monospacedDigitSystemFont(ofSize: 12.0, weight: .semibold)
+            let valFont = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)
             let valAttrs: [NSAttributedString.Key: Any] = [
                 .font: valFont,
                 .foregroundColor: NSColor(hex: only.valueHex),
@@ -83,14 +83,18 @@ enum MenuBarRenderer {
 
     private static func drawBrandIcon(x: CGFloat, height: CGFloat, iconSize: CGFloat) {
         if let symbol = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Antigravity") {
-            let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+            let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
                 .applying(.init(paletteColors: [NSColor(hex: Palette.accentHex)]))
             let configured = symbol.withSymbolConfiguration(config) ?? symbol
+            let drawSize = configured.size
+            let scale = min(iconSize / max(1, drawSize.width), iconSize / max(1, drawSize.height))
+            let w = drawSize.width * scale
+            let h = drawSize.height * scale
             let iconRect = NSRect(
-                x: x,
-                y: (height - iconSize) / 2.0,
-                width: iconSize,
-                height: iconSize
+                x: x + (iconSize - w) / 2.0,
+                y: (height - h) / 2.0,
+                width: w,
+                height: h
             )
             configured.draw(in: iconRect)
         }

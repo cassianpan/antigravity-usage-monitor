@@ -89,8 +89,12 @@ struct GlassEffect: NSViewRepresentable {
     }
 
     func updateNSView(_ view: MaskedEffectView, context: Context) {
-        view.material = material
-        view.cornerRadius = cornerRadius
+        if view.material != material {
+            view.material = material
+        }
+        if view.cornerRadius != cornerRadius {
+            view.cornerRadius = cornerRadius
+        }
     }
 }
 
