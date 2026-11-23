@@ -44,9 +44,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var globalClickMonitor: Any?
     private var localKeyMonitor: Any?
+    private var menuBarSpinTimer: Timer?
+    private var menuBarSpinAngle: CGFloat = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if preferences.enableUsageAlerts || preferences.enableBillingReminders {
+            NotificationManager.shared.requestPermissionIfNeeded()
+        }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -73,7 +78,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.onMenuBarUpdate = { [weak self] in
             self?.updateStatusButton()
         }
+        store.onSyncStateChanged = { [weak self] syncing in
+            self?.setMenuBarSpinning(syncing)
+        }
         updateStatusButton()
+        if store.isSyncingOfficial {
+            setMenuBarSpinning(true)
+        }
     }
 
     @objc private func handleStatusClick(_ sender: AnyObject?) {
@@ -226,12 +237,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func setMenuBarSpinning(_ spinning: Bool) {
+        if spinning {
+            guard menuBarSpinTimer == nil else { return }
+            menuBarSpinTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.menuBarSpinAngle += (.pi * 2.0) / 28.0
+                    if self.menuBarSpinAngle >= .pi * 2.0 {
+                        self.menuBarSpinAngle -= .pi * 2.0
+                    }
+                    self.updateStatusButton()
+                }
+            }
+        } else {
+            menuBarSpinTimer?.invalidate()
+            menuBarSpinTimer = nil
+            menuBarSpinAngle = 0
+            updateStatusButton()
+        }
+    }
+
     private func updateStatusButton() {
         guard let button = statusItem.button else { return }
         button.title = ""
         button.attributedTitle = NSAttributedString(string: "")
         button.imagePosition = .imageOnly
-        button.image = MenuBarRenderer.render(columns: store.menuBarColumns())
+        button.image = MenuBarRenderer.render(
+            columns: store.menuBarColumns(),
+            spinAngleRadians: menuBarSpinAngle
+        )
     }
 }
 

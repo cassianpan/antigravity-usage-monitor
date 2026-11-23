@@ -44,6 +44,7 @@ final class UsageMonitorStore {
     var cliBinaryPath: String? = SilentCLISyncer.locateAgyBinary()?.path
 
     var onMenuBarUpdate: (() -> Void)?
+    var onSyncStateChanged: ((Bool) -> Void)?
 
     private var timer: Timer?
     private var directoryWatcher: DispatchSourceFileSystemObject?
@@ -134,6 +135,11 @@ final class UsageMonitorStore {
 
             self.isRefreshing = false
             self.onMenuBarUpdate?()
+            NotificationManager.shared.evaluateAlerts(
+                official: payload.officialReport,
+                local: payload.localReport,
+                preferences: self.preferences
+            )
 
             let age = payload.officialReport.staleAgeSeconds ?? .infinity
             let sinceLastAttempt = now.timeIntervalSince(self.lastAutoSyncAttempt)
@@ -158,10 +164,12 @@ final class UsageMonitorStore {
             return
         }
         isSyncingOfficial = true
+        onSyncStateChanged?(true)
         lastAutoSyncAttempt = Date()
 
         let result = await silentSyncer.sync(timeoutSeconds: 12.0)
         isSyncingOfficial = false
+        onSyncStateChanged?(false)
 
         switch result {
         case .synced:
@@ -278,8 +286,7 @@ final class UsageMonitorStore {
         }
 
         if preferences.showTodayCostInMenuBar {
-            let cost = localReport.today.estimatedCostUSD
-            let formatted = cost >= 100 ? String(format: "$%.0f", cost) : UsageFormatter.currency(cost)
+            let formatted = preferences.formatMoneyCompact(localReport.today.estimatedCostUSD)
             columns.append(MenuBarColumnItem(
                 topLabel: "TODAY",
                 value: formatted,

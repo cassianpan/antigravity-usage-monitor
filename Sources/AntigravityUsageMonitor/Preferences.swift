@@ -1,6 +1,7 @@
 import Foundation
 import ServiceManagement
 import SwiftUI
+import UsageCore
 
 enum SectionDensity: String, CaseIterable, Identifiable {
     case detailed = "detailed"
@@ -90,6 +91,30 @@ final class AppPreferences {
         didSet { defaults.set(billingDay, forKey: Keys.billingDay) }
     }
 
+    var displayCurrency: DisplayCurrency {
+        didSet { defaults.set(displayCurrency.rawValue, forKey: Keys.displayCurrency) }
+    }
+
+    var cnyExchangeRate: Double {
+        didSet { defaults.set(cnyExchangeRate, forKey: Keys.cnyRate) }
+    }
+
+    var enableUsageAlerts: Bool {
+        didSet { defaults.set(enableUsageAlerts, forKey: Keys.enableUsageAlerts) }
+    }
+
+    var enableBillingReminders: Bool {
+        didSet { defaults.set(enableBillingReminders, forKey: Keys.enableBillingReminders) }
+    }
+
+    func formatMoney(_ usd: Double) -> String {
+        UsageFormatter.money(usd, currency: displayCurrency, cnyRate: cnyExchangeRate)
+    }
+
+    func formatMoneyCompact(_ usd: Double) -> String {
+        UsageFormatter.moneyCompact(usd, currency: displayCurrency, cnyRate: cnyExchangeRate)
+    }
+
     var selectedSpendTab: SpendWindowTab {
         didSet { defaults.set(selectedSpendTab.rawValue, forKey: Keys.spendTab) }
     }
@@ -141,6 +166,10 @@ final class AppPreferences {
         static let spendDensity = "panel.spendDensity"
         static let refreshInterval = "refresh.intervalSeconds"
         static let billingDay = "subscription.billingDay"
+        static let displayCurrency = "general.displayCurrency"
+        static let cnyRate = "general.cnyExchangeRate"
+        static let enableUsageAlerts = "alerts.usage"
+        static let enableBillingReminders = "alerts.billing"
         static let spendTab = "panel.spendTab"
     }
 
@@ -158,6 +187,10 @@ final class AppPreferences {
             Keys.spendDensity: SectionDensity.detailed.rawValue,
             Keys.refreshInterval: 30,
             Keys.billingDay: 0,
+            Keys.displayCurrency: DisplayCurrency.usd.rawValue,
+            Keys.cnyRate: 7.25,
+            Keys.enableUsageAlerts: true,
+            Keys.enableBillingReminders: true,
             Keys.spendTab: SpendWindowTab.week.rawValue,
         ])
 
@@ -184,6 +217,11 @@ final class AppPreferences {
         self.spendSectionDensity = SectionDensity(rawValue: defaults.string(forKey: Keys.spendDensity) ?? "") ?? .detailed
         self.refreshIntervalSeconds = max(10, defaults.integer(forKey: Keys.refreshInterval))
         self.billingDay = max(0, min(31, defaults.integer(forKey: Keys.billingDay)))
+        self.displayCurrency = DisplayCurrency(rawValue: defaults.string(forKey: Keys.displayCurrency) ?? "") ?? .usd
+        let savedRate = defaults.double(forKey: Keys.cnyRate)
+        self.cnyExchangeRate = savedRate > 0.5 ? savedRate : 7.25
+        self.enableUsageAlerts = defaults.bool(forKey: Keys.enableUsageAlerts)
+        self.enableBillingReminders = defaults.bool(forKey: Keys.enableBillingReminders)
         self.selectedSpendTab = SpendWindowTab(rawValue: defaults.string(forKey: Keys.spendTab) ?? "") ?? .week
     }
 }

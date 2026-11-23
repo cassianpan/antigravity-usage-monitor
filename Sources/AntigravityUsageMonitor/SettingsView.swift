@@ -171,7 +171,7 @@ struct SettingsView: View {
                     pillSeparator
                     metricTogglePill(
                         label: "TODAY",
-                        sample: UsageFormatter.currency(store.localReport.today.estimatedCostUSD),
+                        sample: preferences.formatMoneyCompact(store.localReport.today.estimatedCostUSD),
                         isOn: $preferences.showTodayCostInMenuBar,
                         accentHex: 0xECECEC
                     )
@@ -359,6 +359,85 @@ struct SettingsView: View {
                     label: { $0.label(isChinese: zh) },
                     onSelect: { preferences.language = $0 }
                 )
+            }
+
+            Hairline()
+
+            HStack {
+                Text(zh ? "货币单位" : "Currency")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Palette.text)
+                Spacer()
+                SegmentSwitch(
+                    options: DisplayCurrency.allCases,
+                    selection: preferences.displayCurrency,
+                    label: { $0 == .usd ? "USD ($)" : "CNY (¥)" },
+                    onSelect: {
+                        preferences.displayCurrency = $0
+                        store.onMenuBarUpdate?()
+                    }
+                )
+            }
+
+            if preferences.displayCurrency == .cny {
+                HStack {
+                    Text(zh ? "美元兑人民币汇率" : "USD → CNY rate")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Palette.secondary)
+                    Spacer()
+                    Picker("", selection: $preferences.cnyExchangeRate) {
+                        Text("7.00").tag(7.00)
+                        Text("7.15").tag(7.15)
+                        Text("7.25").tag(7.25)
+                        Text("7.30").tag(7.30)
+                        Text("7.35").tag(7.35)
+                    }
+                    .labelsHidden()
+                    .frame(width: 86)
+                    .onChange(of: preferences.cnyExchangeRate) {
+                        store.onMenuBarUpdate?()
+                    }
+                }
+            }
+
+            Hairline()
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(zh ? "额度预警通知" : "Usage alerts")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Palette.text)
+                    Text(zh ? "超过安全配速线或达到 95% 时发送系统通知" : "Notify once past safe line and again at 95%")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Palette.tertiary)
+                }
+                Spacer()
+                Toggle("", isOn: $preferences.enableUsageAlerts)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(Palette.accent)
+                    .onChange(of: preferences.enableUsageAlerts) { _, on in
+                        if on { NotificationManager.shared.requestPermissionIfNeeded() }
+                    }
+            }
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(zh ? "订阅到期提醒" : "Billing reminders")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Palette.text)
+                    Text(zh ? "账单日前 3 天与前 1 天发送提醒" : "Remind 3 days and 1 day before billing day")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Palette.tertiary)
+                }
+                Spacer()
+                Toggle("", isOn: $preferences.enableBillingReminders)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(Palette.accent)
+                    .onChange(of: preferences.enableBillingReminders) { _, on in
+                        if on { NotificationManager.shared.requestPermissionIfNeeded() }
+                    }
             }
 
             Hairline()

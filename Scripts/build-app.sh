@@ -28,6 +28,9 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/$EXEC_NAME"
 chmod +x "$APP_BUNDLE/Contents/MacOS/$EXEC_NAME"
 cp "$ROOT_DIR/Resources/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
+if [ -f "$ROOT_DIR/Resources/AppIcon.icns" ]; then
+    cp "$ROOT_DIR/Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+fi
 
 echo "==> Signing with identity: ${CODESIGN_IDENTITY}"
 codesign --force --deep --sign "$CODESIGN_IDENTITY" "$APP_BUNDLE"

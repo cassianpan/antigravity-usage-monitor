@@ -385,6 +385,7 @@ struct MiniBarsView: View {
     let interaction: PanelInteractionState
     let tipCenter: TipCenter
     let isChinese: Bool
+    let formatMoney: (Double) -> String
 
     var body: some View {
         let maxVal = max(1, points.map(\.totalTokens).max() ?? 1)
@@ -407,7 +408,9 @@ struct MiniBarsView: View {
                     .onHover { inside in
                         withAnimation(.easeOut(duration: 0.12)) {
                             if inside {
-                                interaction.hoveredBarIndex = idx
+                                if interaction.hoveredBarIndex != idx {
+                                    interaction.hoveredBarIndex = idx
+                                }
                             } else if interaction.hoveredBarIndex == idx {
                                 interaction.hoveredBarIndex = nil
                             }
@@ -418,7 +421,7 @@ struct MiniBarsView: View {
                             title: point.dayKey,
                             rows: [
                                 Tip.Row("Tokens", UsageFormatter.compactTokens(point.totalTokens)),
-                                Tip.Row(isChinese ? "估算花费" : "Est. spend", UsageFormatter.currency(point.estimatedCostUSD)),
+                                Tip.Row(isChinese ? "估算花费" : "Est. spend", formatMoney(point.estimatedCostUSD)),
                             ]
                         )
                     }
@@ -663,13 +666,35 @@ struct SegmentSwitch<Option: Hashable & Identifiable>: View {
     }
 }
 
+struct FourPointStarShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let cx = rect.midX
+        let cy = rect.midY
+        let r = min(rect.width, rect.height) / 2.0
+        var path = Path()
+        path.move(to: CGPoint(x: cx, y: cy - r))
+        path.addQuadCurve(to: CGPoint(x: cx + r, y: cy), control: CGPoint(x: cx + r * 0.14, y: cy - r * 0.14))
+        path.addQuadCurve(to: CGPoint(x: cx, y: cy + r), control: CGPoint(x: cx + r * 0.14, y: cy + r * 0.14))
+        path.addQuadCurve(to: CGPoint(x: cx - r, y: cy), control: CGPoint(x: cx - r * 0.14, y: cy + r * 0.14))
+        path.addQuadCurve(to: CGPoint(x: cx, y: cy - r), control: CGPoint(x: cx - r * 0.14, y: cy - r * 0.14))
+        path.closeSubpath()
+        return path
+    }
+}
+
 struct BrandMarkView: View {
-    var size: CGFloat = 14
+    var size: CGFloat = 15
     var color: Color = Palette.accent
 
     var body: some View {
-        Image(systemName: "sparkles")
-            .font(.system(size: size, weight: .semibold))
-            .foregroundStyle(color)
+        FourPointStarShape()
+            .fill(
+                LinearGradient(
+                    colors: [Color(hex: 0x7AB8FF), color, Color(hex: 0x7361FA)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .frame(width: size, height: size)
     }
 }

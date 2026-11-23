@@ -636,7 +636,7 @@ struct PanelView: View {
                 HStack(alignment: .bottom) {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(alignment: .lastTextBaseline, spacing: 6) {
-                            Text(UsageFormatter.currency(summary.estimatedCostUSD))
+                            Text(preferences.formatMoney(summary.estimatedCostUSD))
                                 .font(.system(size: 25, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(Palette.text)
                                 .panelTip("spend.cost", center: tipCenter, alignment: .leading) {
@@ -649,7 +649,7 @@ struct PanelView: View {
                                 }
 
                             if let proj = projection {
-                                let projCostStr = proj.costUSD >= 100 ? String(format: "$%.0f", proj.costUSD) : UsageFormatter.currency(proj.costUSD)
+                                let projCostStr = preferences.formatMoneyCompact(proj.costUSD)
                                 Text(l10n.zh ? "预计 \(projCostStr)" : "→ \(projCostStr)")
                                     .font(.system(size: 11.5, design: .monospaced))
                                     .foregroundStyle(Palette.tertiary)
@@ -685,11 +685,11 @@ struct PanelView: View {
                             let extraPart: String = {
                                 if let proj = projection {
                                     let left = max(0, proj.costUSD - summary.estimatedCostUSD)
-                                    let leftStr = left >= 100 ? String(format: "$%.0f", left) : UsageFormatter.currency(left)
+                                    let leftStr = preferences.formatMoneyCompact(left)
                                     return l10n.zh ? " · 预计还剩 \(leftStr)" : " · \(leftStr) left"
                                 }
                                 if summary.cacheSavingsUSD > 0 {
-                                    return " · \(l10n.savedPrefix)\(UsageFormatter.currency(summary.cacheSavingsUSD))"
+                                    return " · \(l10n.savedPrefix)\(preferences.formatMoney(summary.cacheSavingsUSD))"
                                 }
                                 return ""
                             }()
@@ -697,7 +697,7 @@ struct PanelView: View {
                                 .font(.system(size: 10.5, design: .monospaced))
                                 .foregroundStyle(Palette.tertiary)
                         } else if summary.cacheSavingsUSD > 0 {
-                            Text("\(l10n.savedPrefix)\(UsageFormatter.currency(summary.cacheSavingsUSD))")
+                            Text("\(l10n.savedPrefix)\(preferences.formatMoney(summary.cacheSavingsUSD))")
                                 .font(.system(size: 10.5, design: .monospaced))
                                 .foregroundStyle(Palette.tertiary)
                                 .panelTip("spend.saved.sub", center: tipCenter, alignment: .leading) {
@@ -718,7 +718,8 @@ struct PanelView: View {
                             highlightIndex: max(0, store.localReport.dailyTrend.count - 1),
                             interaction: interaction,
                             tipCenter: tipCenter,
-                            isChinese: l10n.zh
+                            isChinese: l10n.zh,
+                            formatMoney: { preferences.formatMoney($0) }
                         )
                     }
                 }
@@ -746,7 +747,7 @@ struct PanelView: View {
                             )
                         }
                     Spacer()
-                    inlineStat(label: l10n.todayShort, value: UsageFormatter.currency(store.localReport.today.estimatedCostUSD))
+                    inlineStat(label: l10n.todayShort, value: preferences.formatMoney(store.localReport.today.estimatedCostUSD))
                         .panelTip("spend.today", center: tipCenter, alignment: .trailing) {
                             Tip(
                                 title: l10n.zh ? "今日消耗" : "Today's spend",
@@ -795,7 +796,7 @@ struct PanelView: View {
                             .foregroundStyle(Palette.text)
                         Spacer()
                         if summary.cacheSavingsUSD > 0 {
-                            Text("\(l10n.savedPrefix)\(UsageFormatter.currency(summary.cacheSavingsUSD))")
+                            Text("\(l10n.savedPrefix)\(preferences.formatMoney(summary.cacheSavingsUSD))")
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(Palette.tertiary)
                                 .panelTip("spend.saved.bar", center: tipCenter, alignment: .trailing) {
@@ -847,7 +848,7 @@ struct PanelView: View {
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundStyle(Palette.tertiary)
                                 if let cost = model.estimatedCostUSD {
-                                    Text(UsageFormatter.currency(cost))
+                                    Text(preferences.formatMoney(cost))
                                         .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                                         .foregroundStyle(Palette.text)
                                         .frame(minWidth: 54, alignment: .trailing)
@@ -868,7 +869,7 @@ struct PanelView: View {
                                     Tip.Row(l10n.requests, "\(model.requestCount)"),
                                 ]
                                 if let saved = model.cacheSavingsUSD, saved > 0 {
-                                    rows.append(Tip.Row(l10n.zh ? "缓存节省" : "Cache saved", UsageFormatter.currency(saved), color: Palette.safeGreen))
+                                    rows.append(Tip.Row(l10n.zh ? "缓存节省" : "Cache saved", preferences.formatMoney(saved), color: Palette.safeGreen))
                                 }
                                 return Tip(title: model.displayName, rows: rows)
                             }

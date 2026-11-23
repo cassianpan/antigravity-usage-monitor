@@ -8,6 +8,8 @@
     <string>Antigravity Usage Monitor</string>
     <key>CFBundleExecutable</key>
     <string>AntigravityUsageMonitor</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.panmingxuan.antigravity-usage-monitor</string>
     <key>CFBundleInfoDictionaryVersion</key>

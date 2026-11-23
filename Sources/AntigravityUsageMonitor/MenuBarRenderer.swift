@@ -1,18 +1,16 @@
 import AppKit
+import CoreGraphics
 import Foundation
 
-/// Renders the menu bar item:
-/// - Single 5H column (default): clean single-line `[Icon] 3%` without the `5H` caption.
-/// - Multiple columns: compact two-line stacked columns (`5H / WEEK / ...` above values).
+/// Renders the menu bar item with a crisp vector 4-point star (supports smooth spin animation during sync).
 enum MenuBarRenderer {
     @MainActor
-    static func render(columns: [MenuBarColumnItem]) -> NSImage {
+    static func render(columns: [MenuBarColumnItem], spinAngleRadians: CGFloat = 0) -> NSImage {
         let height: CGFloat = 22
-        let iconSize: CGFloat = 16
+        let iconSize: CGFloat = 15
         let leftPadding: CGFloat = 4
         let rightPadding: CGFloat = 4
 
-        // Single-column compact mode: omit the redundant "5H" caption.
         if columns.count == 1, let only = columns.first {
             let gap: CGFloat = 5
             let valFont = NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)
@@ -25,7 +23,12 @@ enum MenuBarRenderer {
             let totalWidth = ceil(leftPadding + iconSize + gap + valSize.width + rightPadding)
 
             let image = NSImage(size: NSSize(width: totalWidth, height: height), flipped: false) { _ in
-                drawBrandIcon(x: leftPadding, height: height, iconSize: iconSize)
+                drawFourPointStar(
+                    cx: leftPadding + iconSize / 2.0,
+                    cy: height / 2.0,
+                    radius: iconSize / 2.0,
+                    angle: spinAngleRadians
+                )
                 let valY = (height - valSize.height) / 2.0
                 valStr.draw(at: NSPoint(x: leftPadding + iconSize + gap, y: valY))
                 return true
@@ -34,7 +37,6 @@ enum MenuBarRenderer {
             return image
         }
 
-        // Multi-column stacked mode (or icon-only when 0 columns)
         let iconToColGap: CGFloat = columns.isEmpty ? 0 : 7
         let colGap: CGFloat = 9
         let topFont = NSFont.systemFont(ofSize: 7.0, weight: .semibold)
@@ -61,7 +63,12 @@ enum MenuBarRenderer {
         let totalWidth = max(24, leftPadding + iconSize + iconToColGap + columnsWidth + rightPadding)
 
         let image = NSImage(size: NSSize(width: totalWidth, height: height), flipped: false) { _ in
-            drawBrandIcon(x: leftPadding, height: height, iconSize: iconSize)
+            drawFourPointStar(
+                cx: leftPadding + iconSize / 2.0,
+                cy: height / 2.0,
+                radius: iconSize / 2.0,
+                angle: spinAngleRadians
+            )
 
             var x = leftPadding + iconSize + iconToColGap
             for item in measured {
@@ -81,22 +88,39 @@ enum MenuBarRenderer {
         return image
     }
 
-    private static func drawBrandIcon(x: CGFloat, height: CGFloat, iconSize: CGFloat) {
-        if let symbol = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Antigravity") {
-            let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
-                .applying(.init(paletteColors: [NSColor(hex: Palette.accentHex)]))
-            let configured = symbol.withSymbolConfiguration(config) ?? symbol
-            let drawSize = configured.size
-            let scale = min(iconSize / max(1, drawSize.width), iconSize / max(1, drawSize.height))
-            let w = drawSize.width * scale
-            let h = drawSize.height * scale
-            let iconRect = NSRect(
-                x: x + (iconSize - w) / 2.0,
-                y: (height - h) / 2.0,
-                width: w,
-                height: h
-            )
-            configured.draw(in: iconRect)
+    private static func drawFourPointStar(cx: CGFloat, cy: CGFloat, radius r: CGFloat, angle: CGFloat) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.saveGState()
+        ctx.translateBy(x: cx, y: cy)
+        if angle != 0 {
+            ctx.rotate(by: -angle) // clockwise rotation in AppKit coordinates
         }
+
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: 0, y: r))
+        path.addQuadCurve(to: CGPoint(x: r, y: 0), control: CGPoint(x: r * 0.14, y: r * 0.14))
+        path.addQuadCurve(to: CGPoint(x: 0, y: -r), control: CGPoint(x: r * 0.14, y: -r * 0.14))
+        path.addQuadCurve(to: CGPoint(x: -r, y: 0), control: CGPoint(x: -r * 0.14, y: -r * 0.14))
+        path.addQuadCurve(to: CGPoint(x: 0, y: r), control: CGPoint(x: -r * 0.14, y: r * 0.14))
+        path.closeSubpath()
+
+        ctx.addPath(path)
+        ctx.clip()
+
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let colors = [
+            CGColor(srgbRed: 0.48, green: 0.72, blue: 1.0, alpha: 1.0),
+            CGColor(srgbRed: 0.31, green: 0.55, blue: 1.0, alpha: 1.0),
+            CGColor(srgbRed: 0.45, green: 0.38, blue: 0.98, alpha: 1.0),
+        ] as CFArray
+        if let grad = CGGradient(colorsSpace: colorSpace, colors: colors, locations: [0.0, 0.55, 1.0]) {
+            ctx.drawLinearGradient(
+                grad,
+                start: CGPoint(x: -r, y: r),
+                end: CGPoint(x: r, y: -r),
+                options: []
+            )
+        }
+        ctx.restoreGState()
     }
 }
