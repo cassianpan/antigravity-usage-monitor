@@ -22,7 +22,9 @@ final class NotificationManager {
 
     func requestPermissionIfNeeded() {
         guard hasBundleIdentifier else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        Task {
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+        }
     }
 
     func openSystemNotificationSettings() {

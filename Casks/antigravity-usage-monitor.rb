@@ -7,7 +7,7 @@ cask "antigravity-usage-monitor" do
   desc "Native macOS menu bar app for Google Antigravity quotas, cache hit rate, and token usage"
   homepage "https://github.com/cassianpan/antigravity-usage-monitor"
 
-  depends_on macos: ">= :sequoia"
+  depends_on macos: :sequoia
   depends_on arch: :arm64
 
   app "Antigravity Usage Monitor.app"

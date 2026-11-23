@@ -1,75 +1,139 @@
+<div align="center">
+
+<img src="docs/images/icon.png" width="112" alt="Antigravity Usage Monitor 图标">
+
 # Antigravity Usage Monitor
 
-[![CI](https://github.com/cassianpan/antigravity-usage-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/cassianpan/antigravity-usage-monitor/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/cassianpan/antigravity-usage-monitor?style=flat-square&color=4F8CFF&label=release)](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest)
-[![macOS 15+](https://img.shields.io/badge/macOS-15%2B-2b2b2b?style=flat-square)](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest)
-[![Swift 6](https://img.shields.io/badge/Swift-6-F05138?style=flat-square)](Package.swift)
+**把 Antigravity 的官方配额与本地 Token 消耗，直接放进 macOS 菜单栏。**
+
+通过官方 `agy` CLI 获取 5 小时 / 每周配额与安全线，结合本地对话日志统计缓存命中率、模型分布与 API 等效费用。<br>
+纯 Swift 6 原生实现，零第三方依赖，零抓包。
+
+[![Release](https://img.shields.io/github/v/release/panmingxuan/antigravity-usage-monitor?style=flat-square&color=4F7BFF&label=release)](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest)
+[![macOS 15+](https://img.shields.io/badge/macOS-15%2B-2b2b2b?style=flat-square&logo=apple&logoColor=white)](#安装方式)
+[![Swift 6](https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white)](Package.swift)
 [![License: MIT](https://img.shields.io/badge/license-MIT-4a4a4a?style=flat-square)](LICENSE)
 
-[English](README.md) · [下载最新版](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest)
+[**下载最新版**](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest) · [English README](README.md)
 
-一个原生、轻量的 macOS 菜单栏应用（Swift 6 / macOS 15+），用于展示 **Google Antigravity** 的官方 5 小时/周限额、缓存命中率、输入/输出 Token 与估算花费。**不做抓包、不调用未公开接口、不读取钥匙串。**
+</div>
+
+<br>
 
 ## 核心特性
 
-- **官方 5 小时与周限额（零抓包、免值守终端）**
-  - 通过官方 `agy --settings` 临时会话参数在后台静默拉取官方 `statusLine` 配额快照，不修改用户的 `settings.json`，也不需要一直开着终端窗口。
-  - 仅在首次登录或登录过期时打开一次终端完成 `agy` 登录，登录完即可关闭终端，后续由 App 自动后台刷新。
-  - 展示剩余/已用百分比、重置倒计时与**安全配速线（Safe Line）**（5 小时按时间线性推进，周限额按天 1/7 推进，超速变红提醒）。
-  - 到达 `reset_time` 后本地自动归零；长期未运行 CLI 时明确标注上次同步时间，绝不用本地估算冒充官方百分比。
-- **精确缓存与输入/输出 Token 拆解**
-  - 增量解析本地 `~/.gemini/antigravity/brain/<会话ID>/.system_generated/logs/transcript.jsonl`（同时覆盖 Antigravity 桌面端与 `agy` CLI 对话）。
-  - 统计 **今日 / 近 5 小时 / 本周** 的新增输入 Token、缓存命中 Token、输出 Token、**缓存命中率**、**按模型拆分** 与 **14 天每日趋势图**。
-- **活跃会话上下文窗口与费用估算**
-  - 实时展示当前活跃 `agy` 会话的 Context Window 占用比例。
-  - 按公开模型单价估算 API 等价花费与缓存节省金额；遇到内置价格表未收录的新模型时，照常计入 Token 并明确标注「含未定价模型」，绝不编造单价。
-- **安全的一键接入与还原**
-  - 接入前自动备份 `~/.gemini/antigravity-cli/settings.json`。
-  - 未配置过自定义 `statusLine` 时自动启用 `stack_with_default: true` 保留官方默认状态栏；检测到已有自定义脚本时自动链式包装，不破坏原有配置，随时可一键还原。
-- **原生菜单栏交互**
-  - 纯菜单栏常驻（无 Dock 图标），默认仅显示 `5H` 百分比，可在设置页按需点亮叠加 `WEEK` / `CACHE` / `TODAY` / `CTX`，采用原生暗色毛玻璃浮层面板与中/英双语切换，支持各区块 **详细 / 简洁 / 隐藏** 与开机自启。
+<table>
+<tr>
+<td width="50%" valign="top">
 
-## 环境要求
+**官方配额，不做猜测**<br>
+通过官方 `agy` CLI 的 `statusLine` 契约读取 5 小时与每周额度（`gemini-5h`、`gemini-weekly`、`3p-5h`、`3p-weekly`），绝不抓包、不调未公开接口、不读系统钥匙串。
 
-- macOS 15 及以上
-- Swift 6 工具链（Xcode 16+ 或 Command Line Tools）
+</td>
+<td width="50%" valign="top">
+
+**菜单栏与面板按需定制**<br>
+菜单栏默认仅显示倾斜四角星图标与 5 小时用量百分比；可在设置中一键开关周限额、缓存命中率、今日消费或上下文占比，面板各模块均支持「详细 / 简洁 / 隐藏」。
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**安全线提前预警节奏**<br>
+每条配额进度条都带有白色安全线刻度，直观显示按当前时间进度消耗到哪里刚好撑到重置；超速即高亮预警，超过重置时间后本地自动归零。
+
+</td>
+<td valign="top">
+
+**后台静默同步**<br>
+通过后台 PTY 以临时 `--settings` 会话静默拉取最新官方配额——无需常驻打开终端、不消耗任何模型 Token，也不会篡改你的 `~/.gemini/antigravity/settings.json`。
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**消耗、缓存省费与 14 天趋势**<br>
+增量解析本地 `transcript.jsonl`，统计本期/本周/今日的 API 等效费用（支持 USD / CNY 汇率换算）、缓存命中率、缓存节省金额、按模型占比、预计用满消耗与 14 天趋势柱图。
+
+</td>
+<td valign="top">
+
+**原生轻量，零第三方依赖**<br>
+纯 Swift 6 + SwiftUI + AppKit 打造（macOS 15+ Apple Silicon），深色半透明毛玻璃浮层面板、悬停提示气泡、可选估算输出速度与本地提醒通知。
+
+</td>
+</tr>
+</table>
+
+## 界面预览
+
+<table>
+<tr>
+<td width="44%" align="center" valign="top">
+<img src="docs/images/zh/panel.png" alt="Antigravity Usage Monitor 主面板"><br>
+<sub><b>主面板</b> · 官方配额与安全线、输出速度、消耗统计与 14 天趋势</sub>
+</td>
+<td width="56%" align="center" valign="top">
+<img src="docs/images/zh/settings.png" alt="Antigravity Usage Monitor 设置窗口"><br>
+<sub><b>设置 › 菜单栏</b> · 实时菜单栏预览与一键点击开关列</sub>
+</td>
+</tr>
+</table>
 
 ## 安装方式
 
-### 方式一：下载安装包（推荐）
-前往 [GitHub Releases](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest) 下载 `.dmg` 或 `.zip`，将 **Antigravity Usage Monitor.app** 拖入 `/Applications`。
+### 方式一：GitHub Releases（`.dmg` 或 `.zip`）
 
-### 方式二：Homebrew Cask
-```bash
-brew tap cassianpan/antigravity-usage-monitor https://github.com/cassianpan/antigravity-usage-monitor
-brew install --cask antigravity-usage-monitor
-```
+前往 [GitHub Releases](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest) 下载最新的 `AntigravityUsageMonitor-*-macOS-arm64.dmg`（或 `.zip`），将 **`Antigravity Usage Monitor.app`** 拖入 `/Applications` 即可使用。
 
-> 由于应用采用本地自签（未经 Apple 公证），首次打开若提示无法验证开发者，可执行：
+> **首次打开提示（开源自签名版）：** 本项目为开源自签名打包，未经过 Apple 付费开发者公证。若 macOS 提示“无法验证开发者”或“已损坏”，执行一次以下命令放行即可：
+>
 > ```bash
 > xattr -dr com.apple.quarantine "/Applications/Antigravity Usage Monitor.app"
 > ```
 
-## 本地编译与自签
+### 方式二：Homebrew Cask
 
 ```bash
-# 运行核心数据层单元测试
-make test
-
-# 编译并默认 ad-hoc 自签生成 build/Antigravity Usage Monitor.app
-make app
-
-# 也可指定本机钥匙串中的自建代码签名证书
-CODESIGN_IDENTITY="你的本地证书名" make app
+brew tap panmingxuan/antigravity-usage-monitor https://github.com/panmingxuan/antigravity-usage-monitor
+brew install --cask antigravity-usage-monitor
 ```
 
-构建完成后，可将 `build/Antigravity Usage Monitor.app` 拖入 `/Applications`，或直接运行 `make run`。
+### 方式三：从源码构建
 
-## 隐私说明
+需要 macOS 15+ 及 Swift 6（Xcode 16+ 或 Apple Command Line Tools）：
 
-- 零网络请求。
-- 零钥匙串读写。
-- 所有对话日志解析与状态快照均严格保留在本机。
+```bash
+git clone https://github.com/panmingxuan/antigravity-usage-monitor.git
+cd antigravity-usage-monitor
+make test
+make app
+make dmg # 可选：在 dist/ 目录生成 .dmg 安装镜像
+```
+
+## 隐私与数据来源说明
+
+本项目严格区分官方配额数据与本地统计数据，不触碰任何登录凭据或未公开接口：
+
+| 数据类别 | 来源 | 说明 |
+| :--- | :--- | :--- |
+| **官方配额与订阅** | 官方 `agy` CLI `statusLine` JSON | 5 小时 / 每周额度、重置时间、订阅档位、账号邮箱 |
+| **本地消耗统计** | `~/.gemini/antigravity/brain/**/transcript.jsonl` | 新增输入 / 缓存命中 / 输出 Token、缓存命中率、模型分布、API 等效估算费用 |
+| **抓包 / 凭据读取** | **无** | 零抓包、零私密 HTTP 接口、零 Keychain 读写 |
+
+## 参考 / Fork 适配其他 AI Agent
+
+如果你想为其他 AI 编程工具（如 **Codex**、**Cursor**、**OpenCode**、**Gemini CLI** 或自研 Agent）做一个同款原生 macOS 菜单栏用量监控，**非常欢迎直接 Fork、参考或复制本仓库的代码！**
+
+项目结构特意保持了清晰的两层解耦：
+- `Sources/UsageCore/`：核心数据模型、增量 JSONL 日志解析器、聚合器、配额评估器、价格目录与 CLI 同步器——只需替换或扩展解析器与配额同步器，即可快速接入任意 Agent 的本地日志和额度源。
+- `Sources/AntigravityUsageMonitor/`：纯 SwiftUI + AppKit 打造的毛玻璃浮层面板、菜单栏渲染器、悬停提示与设置窗口，几乎可以直接复用。
+
+## 致谢
+
+本项目深受 [@kittors](https://github.com/kittors) 开源的 [**claude-usage-monitor**](https://github.com/kittors/claude-usage-monitor) 启发。无论是菜单栏信息密度、配额安全线设计、深色毛玻璃面板质感，还是对 macOS 原生体验的打磨，都参考并致敬了原项目的优秀理念。非常感谢原作者的开源分享！
 
 ## 开源协议
 
