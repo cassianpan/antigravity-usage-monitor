@@ -695,6 +695,7 @@ struct BrandMarkView: View {
                     endPoint: .bottomTrailing
                 )
             )
+            .rotationEffect(.degrees(30))
             .frame(width: size, height: size)
     }
 }

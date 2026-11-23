@@ -92,9 +92,9 @@ enum MenuBarRenderer {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         ctx.saveGState()
         ctx.translateBy(x: cx, y: cy)
-        if angle != 0 {
-            ctx.rotate(by: -angle) // clockwise rotation in AppKit coordinates
-        }
+        // Base 30-degree clockwise tilt + optional sync spin angle
+        let baseTilt: CGFloat = 30.0 * .pi / 180.0
+        ctx.rotate(by: -(baseTilt + angle))
 
         let path = CGMutablePath()
         path.move(to: CGPoint(x: 0, y: r))
