@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Run UsageCoreSelfTest
+        run: make test
+
+      - name: Run XCTest suite
+        run: swift test
+
+      - name: Build and verify self-signed .app
+        run: make app

@@ -1,6 +1,12 @@
 # Antigravity Usage Monitor
 
-[English](README.md)
+[![CI](https://github.com/panmingxuan/antigravity-usage-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/panmingxuan/antigravity-usage-monitor/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/panmingxuan/antigravity-usage-monitor?style=flat-square&color=4F8CFF&label=release)](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest)
+[![macOS 15+](https://img.shields.io/badge/macOS-15%2B-2b2b2b?style=flat-square)](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest)
+[![Swift 6](https://img.shields.io/badge/Swift-6-F05138?style=flat-square)](Package.swift)
+[![License: MIT](https://img.shields.io/badge/license-MIT-4a4a4a?style=flat-square)](LICENSE)
+
+[English](README.md) · [下载最新版](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest)
 
 一个原生、轻量的 macOS 菜单栏应用（Swift 6 / macOS 15+），用于展示 **Google Antigravity** 的官方 5 小时/周限额、缓存命中率、输入/输出 Token 与估算花费。**不做抓包、不调用未公开接口、不读取钥匙串。**
 

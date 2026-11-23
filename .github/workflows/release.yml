@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-macos:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Run unit tests
+        run: |
+          make test
+          swift test
+
+      - name: Build and self-sign .app bundle
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: make app
+
+      - name: Package .zip and SHA-256 checksum
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          ZIP_NAME="AntigravityUsageMonitor-${VERSION}-macOS-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "build/Antigravity Usage Monitor.app" \
+            "dist/${ZIP_NAME}"
+          (cd dist && shasum -a 256 "${ZIP_NAME}" > SHA256SUMS.txt)
+          ls -lh dist/
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cat <<'EOF' > release-notes.md
+          ### Install (macOS 15+ · Apple Silicon)
+
+          1. Download `AntigravityUsageMonitor-${VERSION}-macOS-arm64.zip` below, unzip, and drag **Antigravity Usage Monitor.app** into `/Applications`.
+          2. Because this build is self-signed (not notarized by Apple), macOS Gatekeeper may block the first launch. Run:
+
+          ```bash
+          xattr -dr com.apple.quarantine "/Applications/Antigravity Usage Monitor.app"
+          ```
+
+          ### 安装说明（macOS 15+ · Apple Silicon）
+
+          1. 下载下方 `AntigravityUsageMonitor-${VERSION}-macOS-arm64.zip`，解压后将 **Antigravity Usage Monitor.app** 拖入 `/Applications`。
+          2. 由于应用为本地自签（未经过 Apple 公证），首次打开若提示无法验证开发者，执行上方 `xattr` 命令解除隔离即可正常打开。
+          EOF
+          sed -i '' "s/\${VERSION}/${VERSION}/g" release-notes.md
+
+          gh release create "$TAG" \
+            dist/*.zip \
+            dist/SHA256SUMS.txt \
+            --title "Antigravity Usage Monitor ${TAG}" \
+            --notes-file release-notes.md
