@@ -167,6 +167,22 @@ struct UsageCoreSelfTest {
             let pastReport = QuotaEvaluator().evaluate(snapshot: pastSnapshot, now: now)
             check(pastReport.primaryFiveHour?.isResetElapsed == true, "Should mark reset elapsed")
             check(pastReport.primaryFiveHour?.usedPercentageInt == 0, "Should drop to 0% locally")
+
+            // Inactive bucket with Unix epoch 1970-01-01 should NOT be marked as elapsed reset
+            let inactiveSnapshot = StatusLineSnapshot(
+                quota: [
+                    "3p-5h": StatusLineQuotaBucket(
+                        remainingFraction: 1.0,
+                        resetTime: "1970-01-01T00:00:00Z",
+                        resetInSeconds: 0
+                    ),
+                ],
+                capturedAt: now
+            )
+            let inactiveReport = QuotaEvaluator().evaluate(snapshot: inactiveSnapshot, now: now)
+            check(inactiveReport.primaryFiveHour?.resetTime == nil, "Epoch reset_time should normalize to nil")
+            check(inactiveReport.primaryFiveHour?.isResetElapsed == false, "Unused bucket must not be marked reset elapsed")
+            check(inactiveReport.primaryFiveHour?.remainingPercentageInt == 100, "Remaining % must equal 100 - used %")
         }
 
         runCase("S3: StatusLineBridgeInstaller direct install, script execution, and clean uninstall (D3)") {

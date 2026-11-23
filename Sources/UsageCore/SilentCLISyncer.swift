@@ -170,6 +170,7 @@ public actor SilentCLISyncer {
 
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         var firstQuotaAt: Date?
+        var firstAuthAt: Date?
         var latestSnapshot: StatusLineSnapshot?
         var sawAuthRequired = false
         var drainBuffer = [UInt8](repeating: 0, count: 4096)
@@ -181,11 +182,8 @@ public actor SilentCLISyncer {
             if fm.fileExists(atPath: tempSnapshotURL.path),
                let parsed = evaluator.loadSnapshot(from: tempSnapshotURL) {
                 latestSnapshot = parsed
-                if parsed.agentState == "authenticating" {
-                    sawAuthRequired = true
-                    break
-                }
                 if let quota = parsed.quota, !quota.isEmpty {
+                    firstAuthAt = nil
                     if parsed.planTier?.isEmpty == false {
                         break
                     }
@@ -194,6 +192,17 @@ public actor SilentCLISyncer {
                     } else if Date().timeIntervalSince(firstQuotaAt!) >= 0.8 {
                         break
                     }
+                } else if parsed.agentState == "authenticating" && (parsed.email?.isEmpty ?? true) {
+                    // `agy` briefly reports `authenticating` while validating cached tokens on startup.
+                    // Only treat it as interactive sign-in required if it stays stuck without quota/email.
+                    if firstAuthAt == nil {
+                        firstAuthAt = Date()
+                    } else if Date().timeIntervalSince(firstAuthAt!) >= 5.0 {
+                        sawAuthRequired = true
+                        break
+                    }
+                } else {
+                    firstAuthAt = nil
                 }
             }
 

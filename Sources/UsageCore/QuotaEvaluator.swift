@@ -188,10 +188,15 @@ public struct QuotaEvaluator: Sendable {
     }
 
     private static func resolveResetDate(rawBucket: StatusLineQuotaBucket, capturedAt: Date) -> Date? {
-        if let resetTime = rawBucket.resetTime, let parsed = ISO8601DateParser.parse(resetTime) {
+        // Antigravity uses Unix epoch ("1970-01-01T00:00:00Z") with reset_in_seconds = 0
+        // for inactive/unused quota buckets (e.g. 3P models not used yet in the cycle).
+        let minValidTimestamp: TimeInterval = 946_684_800 // 2000-01-01T00:00:00Z
+        if let resetTime = rawBucket.resetTime,
+           let parsed = ISO8601DateParser.parse(resetTime),
+           parsed.timeIntervalSince1970 >= minValidTimestamp {
             return parsed
         }
-        if let seconds = rawBucket.resetInSeconds {
+        if let seconds = rawBucket.resetInSeconds, seconds > 0 {
             return capturedAt.addingTimeInterval(TimeInterval(seconds))
         }
         return nil
@@ -203,7 +208,7 @@ public struct QuotaEvaluator: Sendable {
         if lower.contains("gemini") {
             group = "Gemini"
         } else if lower.contains("3p") || lower.contains("third") {
-            group = "第三方模型 (3P)"
+            group = "第三方模型"
         } else if lower.contains("claude") {
             group = "Claude"
         } else if lower.contains("gpt") {

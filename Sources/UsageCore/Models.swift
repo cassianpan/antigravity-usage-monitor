@@ -518,9 +518,18 @@ public struct QuotaBucketEvaluation: Sendable, Equatable, Identifiable {
         Int(floor(max(0, min(1, usedFraction)) * 100.0 + 1e-9))
     }
 
+    public var remainingPercentageInt: Int {
+        max(0, 100 - usedPercentageInt)
+    }
+
+    public var safeLinePercentageInt: Int? {
+        guard let safe = safeLineFraction else { return nil }
+        return Int(floor(max(0, min(1, safe)) * 100.0 + 1e-9))
+    }
+
     public var isOverPace: Bool {
-        guard let safe = safeLineFraction, !isResetElapsed else { return false }
-        return usedFraction > safe
+        guard let safePct = safeLinePercentageInt, !isResetElapsed else { return false }
+        return usedPercentageInt > safePct
     }
 }
 
