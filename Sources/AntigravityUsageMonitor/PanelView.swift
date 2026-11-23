@@ -66,7 +66,9 @@ struct PanelView: View {
             if let tier = store.officialReport.planTier, !tier.isEmpty {
                 HStack(spacing: 6) {
                     PlanTagView(rawTier: tier)
-                    if preferences.billingDay > 0, let monthPeriod = store.localReport.monthPeriod {
+                    if preferences.billingDay > 0,
+                       let monthPeriod = store.localReport.monthPeriod,
+                       monthPeriod.remainingDays <= 5 {
                         let days = monthPeriod.remainingDays
                         Text(l10n.zh ? "还剩 \(days) 天" : "\(days)d left")
                             .font(.system(size: 11, weight: .medium))
