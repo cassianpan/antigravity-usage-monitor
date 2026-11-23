@@ -9,35 +9,48 @@ enum SectionDensity: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var label: String {
+    func label(zh: Bool) -> String {
         switch self {
-        case .detailed: return "详细"
-        case .simple: return "简洁"
-        case .hidden: return "隐藏"
+        case .detailed: return zh ? "详细" : "Detailed"
+        case .simple: return zh ? "简洁" : "Simple"
+        case .hidden: return zh ? "隐藏" : "Hidden"
         }
     }
 }
 
-enum LocalWindowTab: String, CaseIterable, Identifiable {
-    case today = "today"
-    case fiveHour = "fiveHour"
+enum SpendWindowTab: String, CaseIterable, Identifiable {
+    case month = "month"
     case week = "week"
+    case today = "today"
 
     var id: String { rawValue }
 
-    var label: String {
+    func label(l10n: L10n) -> String {
         switch self {
-        case .today: return "今日"
-        case .fiveHour: return "近 5 小时"
-        case .week: return "本周"
+        case .month: return l10n.thisMonth
+        case .week: return l10n.thisWeek
+        case .today: return l10n.today
         }
     }
+}
+
+enum SettingsTab: String, CaseIterable, Identifiable {
+    case menuBar = "menuBar"
+    case panel = "panel"
+    case data = "data"
+    case general = "general"
+
+    var id: String { rawValue }
 }
 
 @MainActor
 @Observable
 final class AppPreferences {
     private let defaults = UserDefaults.standard
+
+    var language: AppLanguage {
+        didSet { defaults.set(language.rawValue, forKey: Keys.language) }
+    }
 
     var showFiveHourInMenuBar: Bool {
         didSet { defaults.set(showFiveHourInMenuBar, forKey: Keys.showFiveHour) }
@@ -55,30 +68,39 @@ final class AppPreferences {
         didSet { defaults.set(showContextInMenuBar, forKey: Keys.showContext) }
     }
 
+    var processesSectionDensity: SectionDensity {
+        didSet { defaults.set(processesSectionDensity.rawValue, forKey: Keys.processesDensity) }
+    }
     var quotaSectionDensity: SectionDensity {
         didSet { defaults.set(quotaSectionDensity.rawValue, forKey: Keys.quotaDensity) }
     }
     var contextSectionDensity: SectionDensity {
         didSet { defaults.set(contextSectionDensity.rawValue, forKey: Keys.contextDensity) }
     }
-    var localSectionDensity: SectionDensity {
-        didSet { defaults.set(localSectionDensity.rawValue, forKey: Keys.localDensity) }
+    var spendSectionDensity: SectionDensity {
+        didSet { defaults.set(spendSectionDensity.rawValue, forKey: Keys.spendDensity) }
     }
 
     var refreshIntervalSeconds: Int {
         didSet { defaults.set(refreshIntervalSeconds, forKey: Keys.refreshInterval) }
     }
 
-    var selectedLocalTab: LocalWindowTab {
-        didSet { defaults.set(selectedLocalTab.rawValue, forKey: Keys.localTab) }
+    var selectedSpendTab: SpendWindowTab {
+        didSet { defaults.set(selectedSpendTab.rawValue, forKey: Keys.spendTab) }
     }
 
-    var quotaCollapsed: Bool = false
+    // Ephemeral UI disclosure states (no @State macro needed for CLT build)
+    var processesExpanded: Bool = false
+    var limitsCollapsed: Bool = false
     var contextCollapsed: Bool = false
-    var localCollapsed: Bool = false
+    var spendCollapsed: Bool = false
+    var selectedSettingsTab: SettingsTab = .menuBar
     var launchAtLoginEnabled: Bool = false
-
     var launchAtLoginError: String?
+
+    var l10n: L10n {
+        L10n(zh: language.isChinese)
+    }
 
     func syncLaunchAtLoginStatus() {
         launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
@@ -93,48 +115,56 @@ final class AppPreferences {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            launchAtLoginError = "设置开机自启失败（请确保已将 App 放入 /Applications）：\(error.localizedDescription)"
+            launchAtLoginError = language.isChinese
+                ? "设置开机自启失败（请先将 App 放入 /Applications）：\(error.localizedDescription)"
+                : "Failed to update Login Item (move App to /Applications first): \(error.localizedDescription)"
         }
         syncLaunchAtLoginStatus()
     }
 
     private enum Keys {
+        static let language = "general.language"
         static let showFiveHour = "menubar.showFiveHour"
         static let showWeekly = "menubar.showWeekly"
         static let showCacheRate = "menubar.showCacheRate"
         static let showTodayCost = "menubar.showTodayCost"
         static let showContext = "menubar.showContext"
+        static let processesDensity = "panel.processesDensity"
         static let quotaDensity = "panel.quotaDensity"
         static let contextDensity = "panel.contextDensity"
-        static let localDensity = "panel.localDensity"
+        static let spendDensity = "panel.spendDensity"
         static let refreshInterval = "refresh.intervalSeconds"
-        static let localTab = "panel.localTab"
+        static let spendTab = "panel.spendTab"
     }
 
     init() {
         defaults.register(defaults: [
+            Keys.language: AppLanguage.system.rawValue,
             Keys.showFiveHour: true,
-            Keys.showWeekly: false,
+            Keys.showWeekly: true,
             Keys.showCacheRate: false,
-            Keys.showTodayCost: false,
+            Keys.showTodayCost: true,
             Keys.showContext: false,
+            Keys.processesDensity: SectionDensity.simple.rawValue,
             Keys.quotaDensity: SectionDensity.detailed.rawValue,
             Keys.contextDensity: SectionDensity.detailed.rawValue,
-            Keys.localDensity: SectionDensity.detailed.rawValue,
+            Keys.spendDensity: SectionDensity.detailed.rawValue,
             Keys.refreshInterval: 30,
-            Keys.localTab: LocalWindowTab.today.rawValue,
+            Keys.spendTab: SpendWindowTab.week.rawValue,
         ])
 
+        self.language = AppLanguage(rawValue: defaults.string(forKey: Keys.language) ?? "") ?? .system
         self.showFiveHourInMenuBar = defaults.bool(forKey: Keys.showFiveHour)
         self.showWeeklyInMenuBar = defaults.bool(forKey: Keys.showWeekly)
         self.showCacheRateInMenuBar = defaults.bool(forKey: Keys.showCacheRate)
         self.showTodayCostInMenuBar = defaults.bool(forKey: Keys.showTodayCost)
         self.showContextInMenuBar = defaults.bool(forKey: Keys.showContext)
 
+        self.processesSectionDensity = SectionDensity(rawValue: defaults.string(forKey: Keys.processesDensity) ?? "") ?? .simple
         self.quotaSectionDensity = SectionDensity(rawValue: defaults.string(forKey: Keys.quotaDensity) ?? "") ?? .detailed
         self.contextSectionDensity = SectionDensity(rawValue: defaults.string(forKey: Keys.contextDensity) ?? "") ?? .detailed
-        self.localSectionDensity = SectionDensity(rawValue: defaults.string(forKey: Keys.localDensity) ?? "") ?? .detailed
+        self.spendSectionDensity = SectionDensity(rawValue: defaults.string(forKey: Keys.spendDensity) ?? "") ?? .detailed
         self.refreshIntervalSeconds = max(10, defaults.integer(forKey: Keys.refreshInterval))
-        self.selectedLocalTab = LocalWindowTab(rawValue: defaults.string(forKey: Keys.localTab) ?? "") ?? .today
+        self.selectedSpendTab = SpendWindowTab(rawValue: defaults.string(forKey: Keys.spendTab) ?? "") ?? .week
     }
 }

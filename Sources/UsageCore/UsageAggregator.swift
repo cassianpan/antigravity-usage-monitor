@@ -17,6 +17,8 @@ public struct UsageAggregator: Sendable {
     ) -> LocalUsageReport {
         let startOfToday = calendar.startOfDay(for: now)
         let fiveHoursAgo = now.addingTimeInterval(-5 * 3600)
+        let monthComponents = calendar.dateComponents([.year, .month], from: now)
+        let startOfMonth = calendar.date(from: monthComponents) ?? now.addingTimeInterval(-30 * 24 * 3600)
 
         let weekStart: Date
         if let reset = officialWeeklyResetTime, reset > now {
@@ -28,10 +30,12 @@ public struct UsageAggregator: Sendable {
         let todayRecords = records.filter { $0.timestamp >= startOfToday && $0.timestamp <= now }
         let fiveHourRecords = records.filter { $0.timestamp >= fiveHoursAgo && $0.timestamp <= now }
         let weekRecords = records.filter { $0.timestamp >= weekStart && $0.timestamp <= now }
+        let monthRecords = records.filter { $0.timestamp >= startOfMonth && $0.timestamp <= now }
 
         let todaySummary = summarize(todayRecords)
         let fiveHourSummary = summarize(fiveHourRecords)
         let weekSummary = summarize(weekRecords)
+        let monthSummary = summarize(monthRecords)
         let byModel = summarizeByModel(weekRecords)
         let dailyTrend = buildDailyTrend(records: records, now: now, days: 14)
 
@@ -39,6 +43,7 @@ public struct UsageAggregator: Sendable {
             today: todaySummary,
             fiveHour: fiveHourSummary,
             week: weekSummary,
+            month: monthSummary,
             byModel: byModel,
             dailyTrend: dailyTrend,
             conversationCount: conversationCount,

@@ -171,6 +171,7 @@ public struct LocalUsageReport: Sendable, Equatable {
     public let today: UsageWindowSummary
     public let fiveHour: UsageWindowSummary
     public let week: UsageWindowSummary
+    public let month: UsageWindowSummary
     public let byModel: [ModelUsageSummary]
     public let dailyTrend: [DailyUsagePoint]
     public let conversationCount: Int
@@ -180,6 +181,7 @@ public struct LocalUsageReport: Sendable, Equatable {
         today: UsageWindowSummary = .init(),
         fiveHour: UsageWindowSummary = .init(),
         week: UsageWindowSummary = .init(),
+        month: UsageWindowSummary = .init(),
         byModel: [ModelUsageSummary] = [],
         dailyTrend: [DailyUsagePoint] = [],
         conversationCount: Int = 0,
@@ -188,6 +190,7 @@ public struct LocalUsageReport: Sendable, Equatable {
         self.today = today
         self.fiveHour = fiveHour
         self.week = week
+        self.month = month
         self.byModel = byModel
         self.dailyTrend = dailyTrend
         self.conversationCount = conversationCount

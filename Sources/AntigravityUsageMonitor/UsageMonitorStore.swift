@@ -2,24 +2,17 @@ import AppKit
 import Foundation
 import UsageCore
 
-enum MetricSeverity {
-    case normal
-    case warning
-    case danger
-
-    var nsColor: NSColor {
-        switch self {
-        case .normal: return .labelColor
-        case .warning: return .systemOrange
-        case .danger: return .systemRed
-        }
-    }
+struct RunningProcessInfo: Identifiable, Sendable, Equatable {
+    let id: Int32
+    let name: String
+    let kind: String
 }
 
-struct MenuBarColumnItem {
-    let label: String
+struct MenuBarColumnItem: Identifiable, Equatable {
+    var id: String { topLabel }
+    let topLabel: String
     let value: String
-    let severity: MetricSeverity
+    let valueHex: UInt32
 }
 
 @MainActor
@@ -34,6 +27,7 @@ final class UsageMonitorStore {
     var localReport: LocalUsageReport = LocalUsageReport()
     var officialReport: OfficialQuotaReport = OfficialQuotaReport()
     var bridgeStatus: BridgeStatus = .notInstalled(existingCommand: nil)
+    var runningProcesses: [RunningProcessInfo] = []
     var bridgeFeedback: String?
     var isRefreshing: Bool = false
 
@@ -76,6 +70,8 @@ final class UsageMonitorStore {
             officialWeeklyResetTime: evaluatedOfficial.primaryWeekly?.resetTime
         )
 
+        runningProcesses = detectRunningProcesses()
+
         isRefreshing = false
         onMenuBarUpdate?()
     }
@@ -85,33 +81,70 @@ final class UsageMonitorStore {
         startTimer()
     }
 
-    func installBridge() {
+    /// Prepares the safe statusLine bridge and launches Terminal.app to sign in & sync via `agy`.
+    func openTerminalToConnectCLI() {
         do {
             let status = try bridgeInstaller.install()
             bridgeStatus = status
-            switch status {
-            case .installedDirect:
-                bridgeFeedback = "已安全接入 agy statusLine（已备份原 settings.json 并保留默认状态栏）。运行一次 agy 即可看到官方限额。"
-            case .installedChained(let original):
-                bridgeFeedback = "已安全接入并链式保留你的原状态栏脚本：\(original)"
-            case .notInstalled:
-                bridgeFeedback = nil
-            }
             startSnapshotWatcher()
-            refreshNow()
         } catch {
-            bridgeFeedback = "接入失败：\(error.localizedDescription)"
+            bridgeFeedback = preferences.language.isChinese
+                ? "准备桥接脚本失败：\(error.localizedDescription)"
+                : "Failed to prepare statusLine bridge: \(error.localizedDescription)"
+            return
         }
+
+        let terminalCommand = """
+        clear; echo "=== Antigravity Usage Monitor · CLI Sync ==="; echo ""; \
+        if command -v agy >/dev/null 2>&1; then \
+          echo "Launching agy CLI... Sign in if prompted, then run /usage once to sync limits."; \
+          echo ""; \
+          agy; \
+        else \
+          echo "agy CLI not found in PATH."; \
+          echo "Install Antigravity CLI first, then run 'agy' and '/usage' to sync official limits."; \
+        fi
+        """
+
+        let escaped = terminalCommand
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+
+        let appleScript = """
+        tell application "Terminal"
+            activate
+            do script "\(escaped)"
+        end tell
+        """
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", appleScript]
+        do {
+            try process.run()
+            bridgeFeedback = preferences.language.isChinese
+                ? "已打开终端启动 agy。登录并运行一次 /usage 后，官方额度会自动同步到面板。"
+                : "Opened Terminal with agy. Sign in and run /usage once to sync official limits."
+        } catch {
+            bridgeFeedback = preferences.language.isChinese
+                ? "打开终端失败：\(error.localizedDescription)"
+                : "Failed to open Terminal: \(error.localizedDescription)"
+        }
+        refreshNow()
     }
 
     func uninstallBridge() {
         do {
             try bridgeInstaller.uninstall()
             bridgeStatus = bridgeInstaller.status()
-            bridgeFeedback = "已卸载桥接脚本并还原 settings.json。"
+            bridgeFeedback = preferences.language.isChinese
+                ? "已移除桥接脚本并还原 settings.json。"
+                : "Removed statusLine bridge and restored settings.json."
             refreshNow()
         } catch {
-            bridgeFeedback = "卸载失败：\(error.localizedDescription)"
+            bridgeFeedback = preferences.language.isChinese
+                ? "卸载失败：\(error.localizedDescription)"
+                : "Uninstall failed: \(error.localizedDescription)"
         }
     }
 
@@ -120,55 +153,98 @@ final class UsageMonitorStore {
 
         if preferences.showFiveHourInMenuBar {
             if let fiveHour = officialReport.primaryFiveHour {
-                let severity: MetricSeverity = fiveHour.isOverPace || fiveHour.usedFraction >= 0.85
-                    ? .danger
-                    : (fiveHour.usedFraction >= 0.65 ? .warning : .normal)
+                let hex = Palette.levelHex(for: fiveHour.usedFraction, overPace: fiveHour.isOverPace)
                 columns.append(MenuBarColumnItem(
-                    label: "5h",
+                    topLabel: "5H",
                     value: "\(fiveHour.usedPercentageInt)%",
-                    severity: severity
+                    valueHex: hex
                 ))
             } else {
-                columns.append(MenuBarColumnItem(label: "5h", value: "--", severity: .normal))
+                columns.append(MenuBarColumnItem(topLabel: "5H", value: "--", valueHex: 0x9A9A9A))
             }
         }
 
         if preferences.showWeeklyInMenuBar {
             if let weekly = officialReport.primaryWeekly {
-                let severity: MetricSeverity = weekly.isOverPace || weekly.usedFraction >= 0.85
-                    ? .danger
-                    : (weekly.usedFraction >= 0.65 ? .warning : .normal)
+                let hex = Palette.levelHex(for: weekly.usedFraction, overPace: weekly.isOverPace)
                 columns.append(MenuBarColumnItem(
-                    label: "周",
+                    topLabel: "WEEK",
                     value: "\(weekly.usedPercentageInt)%",
-                    severity: severity
+                    valueHex: hex
                 ))
             } else {
-                columns.append(MenuBarColumnItem(label: "周", value: "--", severity: .normal))
+                columns.append(MenuBarColumnItem(topLabel: "WEEK", value: "--", valueHex: 0x9A9A9A))
             }
         }
 
         if preferences.showCacheRateInMenuBar {
-            let rate = localReport.today.cacheHitRate
-            let value = localReport.today.totalInputTokens > 0 ? UsageFormatter.percentage(rate) : "--"
-            columns.append(MenuBarColumnItem(label: "缓存", value: value, severity: .normal))
+            let value = localReport.today.totalInputTokens > 0
+                ? UsageFormatter.percentage(localReport.today.cacheHitRate)
+                : "--"
+            columns.append(MenuBarColumnItem(
+                topLabel: "CACHE",
+                value: value,
+                valueHex: localReport.today.totalInputTokens > 0 ? Palette.accentHex : 0x9A9A9A
+            ))
         }
 
         if preferences.showTodayCostInMenuBar {
-            let cost = UsageFormatter.currency(localReport.today.estimatedCostUSD)
-            columns.append(MenuBarColumnItem(label: "今", value: cost, severity: .normal))
+            let cost = localReport.today.estimatedCostUSD
+            let formatted = cost >= 100 ? String(format: "$%.0f", cost) : UsageFormatter.currency(cost)
+            columns.append(MenuBarColumnItem(
+                topLabel: "TODAY",
+                value: formatted,
+                valueHex: 0xECECEC
+            ))
         }
 
         if preferences.showContextInMenuBar {
             if let used = officialReport.contextWindow?.usedPercentage {
-                let severity: MetricSeverity = used >= 85 ? .danger : (used >= 65 ? .warning : .normal)
-                columns.append(MenuBarColumnItem(label: "Ctx", value: "\(Int(used))%", severity: severity))
+                let frac = max(0, min(1, used / 100.0))
+                columns.append(MenuBarColumnItem(
+                    topLabel: "CTX",
+                    value: "\(Int(used))%",
+                    valueHex: Palette.levelHex(for: frac)
+                ))
             } else {
-                columns.append(MenuBarColumnItem(label: "Ctx", value: "--", severity: .normal))
+                columns.append(MenuBarColumnItem(topLabel: "CTX", value: "--", valueHex: 0x9A9A9A))
             }
         }
 
         return columns
+    }
+
+    private func detectRunningProcesses() -> [RunningProcessInfo] {
+        var found: [RunningProcessInfo] = []
+        let apps = NSWorkspace.shared.runningApplications
+        for app in apps {
+            guard let name = app.localizedName else { continue }
+            let lower = name.lowercased()
+            if lower.contains("antigravity") && !lower.contains("usage monitor") {
+                found.append(RunningProcessInfo(id: app.processIdentifier, name: name, kind: "App"))
+            }
+        }
+
+        // Also detect running `agy` CLI processes cleanly via pgrep.
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        proc.arguments = ["-x", "agy"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        if (try? proc.run()) != nil {
+            proc.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8) {
+                for line in output.split(separator: "\n") {
+                    if let pid = Int32(line.trimmingCharacters(in: .whitespaces)) {
+                        found.append(RunningProcessInfo(id: pid, name: "agy CLI", kind: "CLI"))
+                    }
+                }
+            }
+        }
+
+        return found
     }
 
     private func startTimer() {

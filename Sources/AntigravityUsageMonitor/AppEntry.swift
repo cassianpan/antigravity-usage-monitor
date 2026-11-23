@@ -2,13 +2,46 @@ import AppKit
 import SwiftUI
 import UsageCore
 
+/// Borderless dark floating panel matching claude-usage-monitor (no native NSPopover arrow).
+@MainActor
+final class FloatingPanel: NSPanel {
+    var onCloseRequested: (() -> Void)?
+
+    init(contentViewController: NSViewController) {
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: Metrics.popoverWidth, height: 480),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        self.contentViewController = contentViewController
+        self.isOpaque = false
+        self.backgroundColor = .clear
+        self.hasShadow = true
+        self.level = .statusBar
+        self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        self.isMovableByWindowBackground = false
+        self.appearance = NSAppearance(named: .darkAqua)
+    }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    override func cancelOperation(_ sender: Any?) {
+        onCloseRequested?()
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let preferences = AppPreferences()
     private lazy var store = UsageMonitorStore(preferences: preferences)
     private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
+    private var panel: FloatingPanel!
+    private var hostingController: NSHostingController<PanelView>!
     private var settingsWindow: NSWindow?
+    private var globalClickMonitor: Any?
+    private var localKeyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -16,14 +49,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.target = self
-            button.action = #selector(togglePopover(_:))
+            button.action = #selector(handleStatusClick(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
-        popover = NSPopover()
-        popover.behavior = .transient
-        popover.animates = true
-        popover.contentViewController = NSHostingController(
+        hostingController = NSHostingController(
             rootView: PanelView(
                 store: store,
                 preferences: preferences,
@@ -32,33 +62,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         )
 
+        panel = FloatingPanel(contentViewController: hostingController)
+        panel.onCloseRequested = { [weak self] in self?.closePanel() }
+
         store.onMenuBarUpdate = { [weak self] in
             self?.updateStatusButton()
         }
         updateStatusButton()
     }
 
-    @objc private func togglePopover(_ sender: AnyObject?) {
-        guard let button = statusItem.button else { return }
-
+    @objc private func handleStatusClick(_ sender: AnyObject?) {
         if let event = NSApp.currentEvent, event.type == .rightMouseUp {
+            let l10n = preferences.l10n
             let menu = NSMenu()
-            menu.addItem(withTitle: "立即刷新", action: #selector(refreshAction), keyEquivalent: "r")
-            menu.addItem(withTitle: "设置…", action: #selector(openSettingsAction), keyEquivalent: ",")
+            menu.addItem(withTitle: l10n.refresh, action: #selector(refreshAction), keyEquivalent: "r")
+            menu.addItem(withTitle: l10n.settings, action: #selector(openSettingsAction), keyEquivalent: ",")
             menu.addItem(.separator())
-            menu.addItem(withTitle: "退出", action: #selector(quitAction), keyEquivalent: "q")
+            menu.addItem(withTitle: l10n.quit, action: #selector(quitAction), keyEquivalent: "q")
             statusItem.menu = menu
             statusItem.button?.performClick(nil)
             statusItem.menu = nil
             return
         }
 
-        if popover.isShown {
-            popover.performClose(sender)
+        if panel.isVisible {
+            closePanel()
         } else {
-            store.refreshNow()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+            openPanel()
+        }
+    }
+
+    private func openPanel() {
+        store.refreshNow()
+        positionPanelUnderStatusItem()
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        installDismissMonitors()
+    }
+
+    private func closePanel() {
+        panel.orderOut(nil)
+        removeDismissMonitors()
+    }
+
+    private func positionPanelUnderStatusItem() {
+        guard let button = statusItem.button, let buttonWindow = button.window else { return }
+        let buttonFrame = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+
+        hostingController.view.layoutSubtreeIfNeeded()
+        let fittingSize = hostingController.view.fittingSize
+        let panelWidth = Metrics.popoverWidth
+        let panelHeight = min(680, max(260, fittingSize.height))
+
+        let screenFrame = buttonWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        var x = buttonFrame.midX - panelWidth / 2.0
+        x = max(screenFrame.minX + 8, min(x, screenFrame.maxX - panelWidth - 8))
+        let y = buttonFrame.minY - panelHeight - 6
+
+        panel.setFrame(NSRect(x: x, y: y, width: panelWidth, height: panelHeight), display: true)
+    }
+
+    private func installDismissMonitors() {
+        removeDismissMonitors()
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            Task { @MainActor in
+                self?.closePanel()
+            }
+        }
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            if event.keyCode == 53 { // Esc
+                Task { @MainActor in
+                    self?.closePanel()
+                }
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removeDismissMonitors() {
+        if let monitor = globalClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalClickMonitor = nil
+        }
+        if let monitor = localKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            localKeyMonitor = nil
         }
     }
 
@@ -75,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openSettingsWindow() {
-        popover.performClose(nil)
+        closePanel()
         if let existing = settingsWindow {
             existing.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -86,8 +175,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             rootView: SettingsView(store: store, preferences: preferences)
         )
         let window = NSWindow(contentViewController: hosting)
-        window.title = "Antigravity Usage Monitor 设置"
+        window.title = "Antigravity Usage Monitor"
         window.styleMask = [.titled, .closable]
+        window.titlebarAppearsTransparent = true
+        window.backgroundColor = NSColor(hex: 0x232322)
+        window.appearance = NSAppearance(named: .darkAqua)
         window.isReleasedWhenClosed = false
         window.center()
         settingsWindow = window
@@ -97,37 +189,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatusButton() {
         guard let button = statusItem.button else { return }
-
-        let image = NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: "Antigravity Usage")
-        image?.isTemplate = true
-        button.image = image
-        button.imagePosition = .imageLeading
-
-        let columns = store.menuBarColumns()
-        if columns.isEmpty {
-            button.attributedTitle = NSAttributedString(string: "")
-            return
-        }
-
-        let attributed = NSMutableAttributedString(string: " ")
-        let labelAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 10, weight: .regular),
-            .foregroundColor: NSColor.secondaryLabelColor,
-        ]
-
-        for (index, col) in columns.enumerated() {
-            if index > 0 {
-                attributed.append(NSAttributedString(string: "  ", attributes: labelAttrs))
-            }
-            attributed.append(NSAttributedString(string: "\(col.label) ", attributes: labelAttrs))
-            let valAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
-                .foregroundColor: col.severity.nsColor,
-            ]
-            attributed.append(NSAttributedString(string: col.value, attributes: valAttrs))
-        }
-
-        button.attributedTitle = attributed
+        button.title = ""
+        button.attributedTitle = NSAttributedString(string: "")
+        button.imagePosition = .imageOnly
+        button.image = MenuBarRenderer.render(columns: store.menuBarColumns())
     }
 }
 
