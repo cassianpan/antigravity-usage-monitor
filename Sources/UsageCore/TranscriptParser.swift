@@ -36,7 +36,7 @@ public struct TranscriptParser: Sendable {
 
     public init() {}
 
-    public func parseLine(_ data: Data, conversationId: String) -> TranscriptRecord? {
+    public func parseLine(_ data: Data, conversationId: String, fallbackModel: String? = nil) -> TranscriptRecord? {
         guard !data.isEmpty else { return nil }
         guard let raw = try? JSONDecoder().decode(RawLine.self, from: data) else {
             return nil
@@ -50,8 +50,15 @@ public struct TranscriptParser: Sendable {
             return nil
         }
 
-        let modelName = raw.model?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedModel = (modelName?.isEmpty == false) ? modelName! : "unknown"
+        let explicitModel = raw.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedModel: String
+        if let explicitModel, !explicitModel.isEmpty, explicitModel.lowercased() != "unknown" {
+            resolvedModel = explicitModel
+        } else if let fallbackModel, !fallbackModel.isEmpty, fallbackModel.lowercased() != "unknown" {
+            resolvedModel = fallbackModel
+        } else {
+            resolvedModel = "unknown"
+        }
 
         return TranscriptRecord(
             timestamp: timestamp,
@@ -64,16 +71,41 @@ public struct TranscriptParser: Sendable {
     }
 
     public func parseData(_ data: Data, conversationId: String) -> [TranscriptRecord] {
+        var lastKnownModel: String? = nil
+        return parseData(data, conversationId: conversationId, lastKnownModel: &lastKnownModel)
+    }
+
+    public func parseData(_ data: Data, conversationId: String, lastKnownModel: inout String?) -> [TranscriptRecord] {
         var results: [TranscriptRecord] = []
         let newline: UInt8 = 0x0A
         var start = data.startIndex
+        var hasLeadingUnknown = false
         while start < data.endIndex {
             let end = data[start...].firstIndex(of: newline) ?? data.endIndex
             let slice = data[start..<end]
-            if !slice.isEmpty, let record = parseLine(Data(slice), conversationId: conversationId) {
+            if !slice.isEmpty, let record = parseLine(Data(slice), conversationId: conversationId, fallbackModel: lastKnownModel) {
+                if record.model.lowercased() != "unknown" {
+                    lastKnownModel = record.model
+                } else {
+                    hasLeadingUnknown = true
+                }
                 results.append(record)
             }
             start = end < data.endIndex ? data.index(after: end) : data.endIndex
+        }
+        // Backfill leading model-less entries (e.g. an early CHECKPOINT) once a real model appears in the same conversation.
+        if hasLeadingUnknown, let resolved = lastKnownModel {
+            results = results.map { record in
+                guard record.model.lowercased() == "unknown" else { return record }
+                return TranscriptRecord(
+                    timestamp: record.timestamp,
+                    model: resolved,
+                    inputTokens: record.inputTokens,
+                    cacheReadTokens: record.cacheReadTokens,
+                    outputTokens: record.outputTokens,
+                    conversationId: record.conversationId
+                )
+            }
         }
         return results
     }
@@ -85,6 +117,7 @@ public final class TranscriptIndex: @unchecked Sendable {
         var byteOffset: UInt64
         var modificationDate: Date
         var records: [TranscriptRecord]
+        var lastKnownModel: String?
     }
 
     private let brainDirectory: URL
@@ -135,13 +168,16 @@ public final class TranscriptIndex: @unchecked Sendable {
             if var cursor = cursors[path] {
                 if fileSize < cursor.byteOffset {
                     // File truncated/rewritten: re-parse from scratch.
-                    let fresh = readSlice(url: transcriptURL, offset: 0, conversationId: conversationId)
-                    cursor = FileCursor(byteOffset: fresh.newOffset, modificationDate: modDate, records: fresh.records)
+                    var lastModel: String? = nil
+                    let fresh = readSlice(url: transcriptURL, offset: 0, conversationId: conversationId, lastKnownModel: &lastModel)
+                    cursor = FileCursor(byteOffset: fresh.newOffset, modificationDate: modDate, records: fresh.records, lastKnownModel: lastModel)
                     cursors[path] = cursor
                 } else if fileSize > cursor.byteOffset || modDate > cursor.modificationDate {
-                    let delta = readSlice(url: transcriptURL, offset: cursor.byteOffset, conversationId: conversationId)
+                    var lastModel = cursor.lastKnownModel
+                    let delta = readSlice(url: transcriptURL, offset: cursor.byteOffset, conversationId: conversationId, lastKnownModel: &lastModel)
                     cursor.byteOffset = delta.newOffset
                     cursor.modificationDate = modDate
+                    cursor.lastKnownModel = lastModel
                     cursor.records.append(contentsOf: delta.records)
                     cursors[path] = cursor
                 }
@@ -150,8 +186,9 @@ public final class TranscriptIndex: @unchecked Sendable {
                     allRecords.append(contentsOf: cursor.records)
                 }
             } else {
-                let fresh = readSlice(url: transcriptURL, offset: 0, conversationId: conversationId)
-                let cursor = FileCursor(byteOffset: fresh.newOffset, modificationDate: modDate, records: fresh.records)
+                var lastModel: String? = nil
+                let fresh = readSlice(url: transcriptURL, offset: 0, conversationId: conversationId, lastKnownModel: &lastModel)
+                let cursor = FileCursor(byteOffset: fresh.newOffset, modificationDate: modDate, records: fresh.records, lastKnownModel: lastModel)
                 cursors[path] = cursor
                 if !cursor.records.isEmpty {
                     conversationIds.insert(conversationId)
@@ -168,7 +205,7 @@ public final class TranscriptIndex: @unchecked Sendable {
         return (allRecords, conversationIds.count)
     }
 
-    private func readSlice(url: URL, offset: UInt64, conversationId: String) -> (records: [TranscriptRecord], newOffset: UInt64) {
+    private func readSlice(url: URL, offset: UInt64, conversationId: String, lastKnownModel: inout String?) -> (records: [TranscriptRecord], newOffset: UInt64) {
         guard let handle = try? FileHandle(forReadingFrom: url) else {
             return ([], offset)
         }
@@ -184,11 +221,14 @@ public final class TranscriptIndex: @unchecked Sendable {
             if let lastNewline = data.lastIndex(of: newline) {
                 let completeLength = data.distance(from: data.startIndex, to: lastNewline) + 1
                 let completeData = data.prefix(completeLength)
-                let records = parser.parseData(completeData, conversationId: conversationId)
+                let records = parser.parseData(completeData, conversationId: conversationId, lastKnownModel: &lastKnownModel)
                 return (records, offset + UInt64(completeLength))
             } else {
                 // Single line without trailing newline: attempt parse, only advance if valid JSON record.
-                if let record = parser.parseLine(data, conversationId: conversationId) {
+                if let record = parser.parseLine(data, conversationId: conversationId, fallbackModel: lastKnownModel) {
+                    if record.model.lowercased() != "unknown" {
+                        lastKnownModel = record.model
+                    }
                     return ([record], offset + UInt64(data.count))
                 }
                 return ([], offset)

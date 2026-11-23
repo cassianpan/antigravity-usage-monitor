@@ -68,7 +68,7 @@ struct UsageCoreSelfTest {
             let p1 = index.refresh()
             check(p1.records.count == 1 && p1.conversationCount == 1, "Pass 1 count mismatch")
 
-            let l2 = "{\"created_at\":\"2026-11-23T06:10:00Z\",\"model\":\"gemini-2.5-flash\",\"input_tokens\":500,\"cache_read_tokens\":4500,\"output_tokens\":150}\n"
+            let l2 = "{\"created_at\":\"2026-11-23T06:10:00Z\",\"type\":\"CHECKPOINT\",\"source\":\"SYSTEM\",\"input_tokens\":500,\"cache_read_tokens\":4500,\"output_tokens\":150}\n"
             let handle = try FileHandle(forWritingTo: fileURL)
             try handle.seekToEnd()
             try handle.write(contentsOf: Data(l2.utf8))
@@ -76,6 +76,7 @@ struct UsageCoreSelfTest {
 
             let p2 = index.refresh()
             check(p2.records.count == 2 && p2.records[1].cacheReadTokens == 4500, "Pass 2 incremental append mismatch")
+            check(p2.records[1].model == "gemini-2.5-flash", "CHECKPOINT without model should inherit conversation's lastKnownModel, got \(p2.records[1].model)")
         }
 
         runCase("S1: UsageAggregator computes cache hit rate, 14d trend, and flags unpriced models (D5)") {
