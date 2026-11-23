@@ -34,6 +34,22 @@
 - macOS 15 及以上
 - Swift 6 工具链（Xcode 16+ 或 Command Line Tools）
 
+## 安装方式
+
+### 方式一：下载安装包（推荐）
+前往 [GitHub Releases](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest) 下载 `.dmg` 或 `.zip`，将 **Antigravity Usage Monitor.app** 拖入 `/Applications`。
+
+### 方式二：Homebrew Cask
+```bash
+brew tap panmingxuan/antigravity-usage-monitor https://github.com/panmingxuan/antigravity-usage-monitor
+brew install --cask antigravity-usage-monitor
+```
+
+> 由于应用采用本地自签（未经 Apple 公证），首次打开若提示无法验证开发者，可执行：
+> ```bash
+> xattr -dr com.apple.quarantine "/Applications/Antigravity Usage Monitor.app"
+> ```
+
 ## 本地编译与自签
 
 ```bash

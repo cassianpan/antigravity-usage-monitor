@@ -34,6 +34,22 @@ A minimal, native macOS menu bar app (Swift 6 / macOS 15+) for monitoring **Goog
 - macOS 15+
 - Swift 6 toolchain (Xcode 16+ or Command Line Tools)
 
+## Install
+
+### Option 1: GitHub Releases (Recommended)
+Download the `.dmg` or `.zip` from [GitHub Releases](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest) and move **Antigravity Usage Monitor.app** into `/Applications`.
+
+### Option 2: Homebrew Cask
+```bash
+brew tap panmingxuan/antigravity-usage-monitor https://github.com/panmingxuan/antigravity-usage-monitor
+brew install --cask antigravity-usage-monitor
+```
+
+> Since builds are self-signed (not notarized by Apple), if macOS blocks the first launch, run:
+> ```bash
+> xattr -dr com.apple.quarantine "/Applications/Antigravity Usage Monitor.app"
+> ```
+
 ## Build & Self-Sign
 
 ```bash
