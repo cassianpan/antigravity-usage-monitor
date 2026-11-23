@@ -35,6 +35,8 @@ final class FloatingPanel: NSPanel {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let preferences = AppPreferences()
+    private let tipCenter = TipCenter()
+    private let interaction = PanelInteractionState()
     private lazy var store = UsageMonitorStore(preferences: preferences)
     private var statusItem: NSStatusItem!
     private var panel: FloatingPanel!
@@ -57,7 +59,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             rootView: PanelView(
                 store: store,
                 preferences: preferences,
+                tipCenter: tipCenter,
+                interaction: interaction,
                 onOpenSettings: { [weak self] in self?.openSettingsWindow() },
+                onRefresh: { [weak self] in self?.triggerRefreshWithSpin() },
                 onQuit: { NSApp.terminate(nil) }
             )
         )
@@ -94,6 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func openPanel() {
         store.refreshNow()
+        interaction.resetHovers()
+        tipCenter.setActive(true)
         positionPanelUnderStatusItem()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -101,8 +108,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func closePanel() {
+        tipCenter.setActive(false)
+        interaction.resetHovers()
         panel.orderOut(nil)
         removeDismissMonitors()
+    }
+
+    private func triggerRefreshWithSpin() {
+        interaction.triggerRefreshSpin()
+        store.refreshNow()
     }
 
     private func positionPanelUnderStatusItem() {
@@ -132,11 +146,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            guard let self, self.panel.isVisible else { return event }
             if event.keyCode == 53 { // Esc
-                Task { @MainActor in
-                    self?.closePanel()
-                }
+                Task { @MainActor in self.closePanel() }
                 return nil
+            }
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if flags == .command, let chars = event.charactersIgnoringModifiers?.lowercased() {
+                switch chars {
+                case ",":
+                    Task { @MainActor in self.openSettingsWindow() }
+                    return nil
+                case "r":
+                    Task { @MainActor in self.triggerRefreshWithSpin() }
+                    return nil
+                case "q":
+                    Task { @MainActor in NSApp.terminate(nil) }
+                    return nil
+                default:
+                    break
+                }
             }
             return event
         }

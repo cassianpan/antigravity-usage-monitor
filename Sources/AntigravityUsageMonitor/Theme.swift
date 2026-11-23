@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UsageCore
 
 extension Color {
     init(hex: UInt32, opacity: Double = 1) {
@@ -313,6 +314,7 @@ struct ThinBar: View {
     var height: CGFloat = 4
     var safeLine: Double? = nil
     var exceeded: Bool = false
+    var isPointed: Bool = false
 
     var body: some View {
         GeometryReader { geo in
@@ -324,6 +326,12 @@ struct ThinBar: View {
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(Palette.track)
+
+                if isPointed, let markX {
+                    Capsule()
+                        .fill(Color.white.opacity(0.09))
+                        .frame(width: max(height, markX))
+                }
 
                 if fillWidth > 0 {
                     Capsule()
@@ -348,34 +356,58 @@ struct ThinBar: View {
                 if let markX {
                     Capsule()
                         .fill(Palette.text)
-                        .frame(width: 1.5, height: height + 5)
+                        .frame(width: 1.5, height: height + (isPointed ? 8 : 5))
                         .offset(x: max(0, min(width - 1.5, markX - 0.75)))
                 }
             }
         }
-        .frame(height: height + 5)
+        .frame(height: height + 8)
     }
 }
 
 struct MiniBarsView: View {
-    let values: [Double]
-    let labels: [String]
+    let points: [DailyUsagePoint]
     let highlightIndex: Int
+    let interaction: PanelInteractionState
+    let tipCenter: TipCenter
+    let isChinese: Bool
 
     var body: some View {
-        let maxVal = max(1e-9, values.max() ?? 1)
+        let maxVal = max(1, points.map(\.totalTokens).max() ?? 1)
         HStack(alignment: .bottom, spacing: 3) {
-            ForEach(Array(values.enumerated()), id: \.offset) { idx, val in
-                let ratio = val / maxVal
+            ForEach(Array(points.enumerated()), id: \.offset) { idx, point in
+                let ratio = Double(point.totalTokens) / Double(maxVal)
                 let isToday = idx == highlightIndex
+                let isHovered = interaction.hoveredBarIndex == idx
                 RoundedRectangle(cornerRadius: 1.5)
                     .fill(
                         isToday
-                            ? Palette.accent
-                            : (val > 0 ? Color.white.opacity(0.28) : Color.white.opacity(0.08))
+                            ? Palette.accent.opacity(isHovered ? 1.0 : 0.92)
+                            : (isHovered
+                                ? Color.white.opacity(0.65)
+                                : (point.totalTokens > 0 ? Color.white.opacity(0.28) : Color.white.opacity(0.08)))
                     )
-                    .frame(width: 5, height: val > 0 ? max(3, CGFloat(ratio) * 30) : 2)
-                    .help(idx < labels.count ? labels[idx] : "")
+                    .frame(width: 5, height: point.totalTokens > 0 ? max(3, CGFloat(ratio) * 30) : 2)
+                    .frame(height: 32, alignment: .bottom)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            if inside {
+                                interaction.hoveredBarIndex = idx
+                            } else if interaction.hoveredBarIndex == idx {
+                                interaction.hoveredBarIndex = nil
+                            }
+                        }
+                    }
+                    .panelTip("bar.\(idx)", center: tipCenter) {
+                        Tip(
+                            title: point.dayKey,
+                            rows: [
+                                Tip.Row("Tokens", UsageFormatter.compactTokens(point.totalTokens)),
+                                Tip.Row(isChinese ? "估算花费" : "Est. spend", UsageFormatter.currency(point.estimatedCostUSD)),
+                            ]
+                        )
+                    }
             }
         }
         .frame(height: 32, alignment: .bottom)

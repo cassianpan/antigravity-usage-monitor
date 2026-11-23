@@ -4,7 +4,10 @@ import UsageCore
 struct PanelView: View {
     @Bindable var store: UsageMonitorStore
     @Bindable var preferences: AppPreferences
+    @Bindable var tipCenter: TipCenter
+    @Bindable var interaction: PanelInteractionState
     let onOpenSettings: () -> Void
+    let onRefresh: () -> Void
     let onQuit: () -> Void
 
     var body: some View {
@@ -38,6 +41,7 @@ struct PanelView: View {
         }
         .frame(width: Metrics.popoverWidth)
         .background(PanelBackground())
+        .panelTipOverlay(center: tipCenter)
         .padding(Metrics.shadowInset)
         .preferredColorScheme(.dark)
     }
@@ -182,7 +186,7 @@ struct PanelView: View {
 
     private func limitRow(bucket: QuotaBucketEvaluation, l10n: L10n, isSimple: Bool) -> some View {
         let levelColor = Palette.levelColor(for: bucket.usedFraction, overPace: bucket.isOverPace)
-        let tooltip = limitTooltip(bucket: bucket, l10n: l10n)
+        let isHovered = interaction.hoveredBucketId == bucket.bucketId
 
         return VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
@@ -200,13 +204,35 @@ struct PanelView: View {
                 color: Palette.levelColor(for: bucket.usedFraction, overPace: false),
                 height: 4,
                 safeLine: bucket.safeLineFraction,
-                exceeded: bucket.isOverPace
+                exceeded: bucket.isOverPace,
+                isPointed: isHovered
             )
-            .help(tooltip)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                withAnimation(.easeOut(duration: 0.14)) {
+                    if inside {
+                        interaction.hoveredBucketId = bucket.bucketId
+                    } else if interaction.hoveredBucketId == bucket.bucketId {
+                        interaction.hoveredBucketId = nil
+                    }
+                }
+            }
+            .panelTip("limit.\(bucket.bucketId)", center: tipCenter) {
+                limitTip(bucket: bucket, l10n: l10n)
+            }
 
             if !isSimple {
                 HStack {
-                    if bucket.isResetElapsed {
+                    if isHovered, let safe = bucket.safeLineFraction, !bucket.isResetElapsed {
+                        let headroom = max(0, safe - bucket.usedFraction)
+                        Text(
+                            bucket.isOverPace
+                                ? "\(l10n.safeLine)\(UsageFormatter.percentage(safe)) · \(l10n.zh ? "已超速" : "Over pace")"
+                                : "\(l10n.safeLine)\(UsageFormatter.percentage(safe)) · \(l10n.zh ? "安全余量 " : "Headroom ")\(UsageFormatter.percentage(headroom))"
+                        )
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(bucket.isOverPace ? Palette.critical : Palette.secondary)
+                    } else if bucket.isResetElapsed {
                         Text(l10n.resetDone)
                             .font(.system(size: 10.5))
                             .foregroundStyle(Palette.tertiary)
@@ -216,25 +242,27 @@ struct PanelView: View {
                             .foregroundStyle(Palette.tertiary)
                     }
                     Spacer()
-                    if let safe = bucket.safeLineFraction, bucket.isOverPace {
-                        Text("\(l10n.safeLine)\(UsageFormatter.percentage(safe))")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Palette.critical)
-                    }
                 }
             }
         }
     }
 
-    private func limitTooltip(bucket: QuotaBucketEvaluation, l10n: L10n) -> String {
-        var parts = ["\(bucket.usedPercentageInt)%"]
-        if let safe = bucket.safeLineFraction {
-            parts.append("\(l10n.safeLine)\(UsageFormatter.percentage(safe))")
+    private func limitTip(bucket: QuotaBucketEvaluation, l10n: L10n) -> Tip {
+        var rows: [Tip.Row] = [
+            Tip.Row(l10n.zh ? "已用" : "Used", "\(bucket.usedPercentageInt)%"),
+            Tip.Row(l10n.zh ? "剩余" : "Remaining", UsageFormatter.percentage(bucket.remainingFraction)),
+        ]
+        if let safe = bucket.safeLineFraction, !bucket.isResetElapsed {
+            rows.append(Tip.Row(
+                l10n.zh ? "此刻安全线" : "Safe line",
+                UsageFormatter.percentage(safe),
+                color: bucket.isOverPace ? Palette.critical : Palette.safeGreen
+            ))
         }
         if let secs = bucket.remainingSecondsUntilReset, !bucket.isResetElapsed {
-            parts.append("\(l10n.resetsIn)\(UsageFormatter.countdown(secs))")
+            rows.append(Tip.Row(l10n.zh ? "距离重置" : "Resets in", UsageFormatter.countdown(secs), separated: true))
         }
-        return parts.joined(separator: " · ")
+        return Tip(title: bucket.displayName, rows: rows)
     }
 
     // MARK: - Active Context Window Section
@@ -339,10 +367,11 @@ struct PanelView: View {
             .buttonStyle(.plain)
 
             if !preferences.spendCollapsed {
-                // Dark capsule segmented control (full-area hit target + smooth transition)
+                // Dark capsule segmented control (full-area hit target + hover + smooth transition)
                 HStack(spacing: 2) {
                     ForEach(SpendWindowTab.allCases) { tab in
                         let selected = preferences.selectedSpendTab == tab
+                        let hovered = interaction.hoveredTab == tab && !selected
                         Button {
                             guard preferences.selectedSpendTab != tab else { return }
                             withAnimation(.easeOut(duration: 0.14)) {
@@ -351,16 +380,25 @@ struct PanelView: View {
                         } label: {
                             Text(tab.label(l10n: l10n))
                                 .font(.system(size: 11.5, weight: selected ? .medium : .regular))
-                                .foregroundStyle(selected ? Palette.text : Palette.secondary)
+                                .foregroundStyle(selected ? Palette.text : (hovered ? Palette.text.opacity(0.8) : Palette.secondary))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 5)
                                 .background(
                                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .fill(selected ? Palette.controlSelected : Color.clear)
+                                        .fill(selected ? Palette.controlSelected : (hovered ? Palette.hover : Color.clear))
                                 )
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .onHover { inside in
+                            withAnimation(.easeOut(duration: 0.12)) {
+                                if inside {
+                                    interaction.hoveredTab = tab
+                                } else if interaction.hoveredTab == tab {
+                                    interaction.hoveredTab = nil
+                                }
+                            }
+                        }
                     }
                 }
                 .padding(2)
@@ -388,11 +426,13 @@ struct PanelView: View {
                     Spacer()
 
                     if preferences.spendSectionDensity == .detailed, !store.localReport.dailyTrend.isEmpty {
-                        let vals = store.localReport.dailyTrend.map { Double($0.totalTokens) }
-                        let labels = store.localReport.dailyTrend.map {
-                            "\($0.dayKey): \(UsageFormatter.compactTokens($0.totalTokens)) tokens · \(UsageFormatter.currency($0.estimatedCostUSD))"
-                        }
-                        MiniBarsView(values: vals, labels: labels, highlightIndex: max(0, vals.count - 1))
+                        MiniBarsView(
+                            points: store.localReport.dailyTrend,
+                            highlightIndex: max(0, store.localReport.dailyTrend.count - 1),
+                            interaction: interaction,
+                            tipCenter: tipCenter,
+                            isChinese: l10n.zh
+                        )
                     }
                 }
 
@@ -501,54 +541,49 @@ struct PanelView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Footer
+    // MARK: - Footer (1:1 ported FooterActionButton + shortcut tips + spin animation)
 
     private func footerBar(l10n: L10n) -> some View {
         HStack {
-            Button {
-                onOpenSettings()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 11))
-                    Text(l10n.settings)
-                        .font(.system(size: 11.5))
-                }
-                .foregroundStyle(Palette.secondary)
-            }
-            .buttonStyle(.plain)
+            FooterActionButton(
+                id: "settings",
+                systemImage: "slider.horizontal.3",
+                title: l10n.settings,
+                shortcut: "⌘,",
+                interaction: interaction,
+                tipCenter: tipCenter,
+                isChinese: l10n.zh,
+                action: onOpenSettings
+            )
 
             Spacer()
 
-            Button {
-                store.refreshNow()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11))
-                    Text(l10n.refresh)
-                        .font(.system(size: 11.5))
-                }
-                .foregroundStyle(Palette.secondary)
-            }
-            .buttonStyle(.plain)
+            FooterActionButton(
+                id: "refresh",
+                systemImage: "arrow.clockwise",
+                title: l10n.refresh,
+                shortcut: "⌘R",
+                rotation: interaction.refreshSpinDegrees,
+                interaction: interaction,
+                tipCenter: tipCenter,
+                isChinese: l10n.zh,
+                action: onRefresh
+            )
 
             Spacer()
 
-            Button {
-                onQuit()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "power")
-                        .font(.system(size: 11))
-                    Text(l10n.quit)
-                        .font(.system(size: 11.5))
-                }
-                .foregroundStyle(Palette.secondary)
-            }
-            .buttonStyle(.plain)
+            FooterActionButton(
+                id: "quit",
+                systemImage: "power",
+                title: l10n.quit,
+                shortcut: "⌘Q",
+                interaction: interaction,
+                tipCenter: tipCenter,
+                isChinese: l10n.zh,
+                action: onQuit
+            )
         }
-        .padding(.horizontal, Metrics.padding)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
     }
 }
