@@ -77,7 +77,8 @@ struct PanelView: View {
 
             if let update = store.visibleAvailableUpdate {
                 Button {
-                    store.openUpdateReleasePage()
+                    preferences.selectedSettingsTab = .general
+                    onOpenSettings()
                 } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.up.circle.fill")
@@ -101,8 +102,8 @@ struct PanelView: View {
                             Tip.Row(l10n.zh ? "最新版本" : "Latest", "v\(update.version)", color: Palette.accent),
                         ],
                         note: l10n.zh
-                            ? "点击前往 GitHub 下载，或通过 brew upgrade --cask antigravity-usage-monitor 升级。"
-                            : "Click to open GitHub Releases, or run brew upgrade --cask antigravity-usage-monitor."
+                            ? "点击打开设置查看更新日志，支持一键下载并自动重启更新。"
+                            : "Click to open Settings for release notes and one-click in-app update."
                     )
                 }
             }
@@ -1157,6 +1158,15 @@ struct PanelView: View {
                     isChinese: l10n.zh,
                     action: onOpenSettings
                 )
+                .overlay(alignment: .topTrailing) {
+                    if store.showsSettingsUpdateBadge {
+                        Circle()
+                            .fill(Palette.accent)
+                            .frame(width: 6, height: 6)
+                            .offset(x: -2, y: 2)
+                            .allowsHitTesting(false)
+                    }
+                }
                 Spacer()
                 FooterActionButton(
                     id: "quit",

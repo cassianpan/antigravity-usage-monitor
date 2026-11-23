@@ -33,6 +33,19 @@ final class NotificationManager {
         }
     }
 
+    func postUpdateAvailableIfNew(version: String, zh: Bool) {
+        guard hasBundleIdentifier else { return }
+        let key = "app-update.\(version)"
+        guard markIfNew(key) else { return }
+        post(
+            id: "app-update",
+            title: zh ? "发现新版本 v\(version)" : "Version v\(version) is available",
+            body: zh
+                ? "打开「设置 › 通用」即可查看更新日志并一键更新。"
+                : "Open Settings › General to view release notes and install the update."
+        )
+    }
+
     func evaluateAlerts(
         official: OfficialQuotaReport,
         local: LocalUsageReport,

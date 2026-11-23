@@ -15,6 +15,25 @@ struct MenuBarColumnItem: Identifiable, Equatable {
     let valueHex: UInt32
 }
 
+enum UpdateInstallPhase: Equatable {
+    case idle
+    case checking
+    case upToDate
+    case available(AppUpdateInfo)
+    case downloading(version: String, progress: Double)
+    case installing(version: String)
+    case failed(String)
+
+    var isBusy: Bool {
+        switch self {
+        case .checking, .downloading, .installing:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 private struct RefreshPayload: Sendable {
     let bridgeStatus: BridgeStatus
     let cliBinaryPath: String?
@@ -49,6 +68,7 @@ final class UsageMonitorStore {
         return AppVersionComparator.normalize(raw)
     }()
     var availableUpdate: AppUpdateInfo? = nil
+    var updatePhase: UpdateInstallPhase = .idle
     var isCheckingUpdates: Bool = false
     var updateStatusText: String? = nil
     var copiedBrewUpgrade: Bool = false
@@ -59,6 +79,34 @@ final class UsageMonitorStore {
             return nil
         }
         return info
+    }
+
+    var isUpdateDismissed: Bool {
+        guard let info = availableUpdate else { return false }
+        return preferences.dismissedUpdateVersion == info.version
+    }
+
+    var showsSettingsUpdateBadge: Bool {
+        switch updatePhase {
+        case .downloading, .installing:
+            return true
+        case .available:
+            return visibleAvailableUpdate != nil
+        default:
+            return visibleAvailableUpdate != nil
+        }
+    }
+
+    var updateDownloadFraction: Double? {
+        if case .downloading(_, let progress) = updatePhase {
+            return progress
+        }
+        return nil
+    }
+
+    var canInstallUpdateInPlace: Bool {
+        guard let info = availableUpdate, info.zipURL != nil else { return false }
+        return !updatePhase.isBusy
     }
 
     var onMenuBarUpdate: (() -> Void)?
@@ -101,13 +149,16 @@ final class UsageMonitorStore {
 
     func checkForUpdatesIfNeeded() async {
         guard preferences.autoCheckUpdates else { return }
-        guard Date().timeIntervalSince(lastUpdateCheckAt) >= 6 * 3600 else { return }
+        guard Date().timeIntervalSince(lastUpdateCheckAt) >= 12 * 3600 else { return }
         await checkForUpdates(manual: false)
     }
 
     func checkForUpdates(manual: Bool) async {
-        guard !isCheckingUpdates else { return }
+        guard !updatePhase.isBusy else { return }
         isCheckingUpdates = true
+        if manual || updatePhase == .idle {
+            updatePhase = .checking
+        }
         lastUpdateCheckAt = Date()
         let zh = preferences.language.isChinese
         if manual {
@@ -120,20 +171,145 @@ final class UsageMonitorStore {
         switch result {
         case .updateAvailable(let info):
             availableUpdate = info
+            updatePhase = .available(info)
             if manual {
                 preferences.dismissedUpdateVersion = ""
             }
-            updateStatusText = zh ? "发现新版本 v\(info.version)" : "Update available: v\(info.version)"
+            updateStatusText = isUpdateDismissed
+                ? (zh ? "已忽略 v\(info.version)，仍可随时更新" : "Skipped v\(info.version). Still available.")
+                : (zh ? "发现新版本 v\(info.version)" : "Version v\(info.version) is available")
+            if !isUpdateDismissed {
+                NotificationManager.shared.postUpdateAvailableIfNew(version: info.version, zh: zh)
+            }
         case .upToDate(let current):
             availableUpdate = nil
+            updatePhase = .upToDate
             if manual {
                 updateStatusText = zh ? "已是最新版本 (v\(current))" : "Up to date (v\(current))"
             }
         case .failed(let reason):
             if manual {
+                updatePhase = .failed(reason)
                 updateStatusText = zh ? "检查失败：\(reason)" : "Check failed: \(reason)"
+            } else if availableUpdate == nil {
+                updatePhase = .idle
             }
         }
+    }
+
+    func installAvailableUpdate() async {
+        guard let info = availableUpdate, let zipURL = info.zipURL else {
+            openUpdateReleasePage()
+            return
+        }
+        guard !updatePhase.isBusy else { return }
+
+        let zh = preferences.language.isChinese
+        let targetAppURL = Bundle.main.bundleURL
+        guard targetAppURL.pathExtension == "app" else {
+            let msg = zh ? "当前为开发运行态，请前往 GitHub 下载或在终端升级" : "Running outside .app bundle. Download from GitHub or use Homebrew."
+            updatePhase = .failed(msg)
+            updateStatusText = msg
+            return
+        }
+
+        updatePhase = .downloading(version: info.version, progress: 0)
+        updateStatusText = zh ? "正在下载 v\(info.version)…" : "Downloading v\(info.version)…"
+
+        do {
+            let zipData = try await updateChecker.downloadData(from: zipURL) { [weak self] fraction in
+                guard let self else { return }
+                self.updatePhase = .downloading(version: info.version, progress: fraction)
+                let pct = Int(round(fraction * 100))
+                self.updateStatusText = zh ? "正在下载 v\(info.version) (\(pct)%)" : "Downloading v\(info.version) (\(pct)%)"
+            }
+
+            if let checksumsURL = info.checksumsURL, let zipName = info.zipFileName {
+                if let expectedHash = try await updateChecker.fetchExpectedSHA256(from: checksumsURL, matchingFileName: zipName) {
+                    guard UpdateChecker.verifySHA256(data: zipData, expectedHex: expectedHash) else {
+                        let msg = zh ? "安装包 SHA-256 校验失败，已中止更新" : "SHA-256 verification failed. Update aborted."
+                        updatePhase = .failed(msg)
+                        updateStatusText = msg
+                        return
+                    }
+                }
+            }
+
+            updatePhase = .installing(version: info.version)
+            updateStatusText = zh ? "正在安装 v\(info.version)，即将重启…" : "Installing v\(info.version), restarting…"
+
+            let extractedAppURL = try await Task.detached(priority: .userInitiated) {
+                try Self.unpackUpdateZip(zipData)
+            }.value
+
+            try Self.launchRelaunchScript(replacing: targetAppURL, with: extractedAppURL)
+        } catch {
+            let msg = zh ? "更新失败：\(error.localizedDescription)" : "Update failed: \(error.localizedDescription)"
+            updatePhase = .failed(msg)
+            updateStatusText = msg
+        }
+    }
+
+    private nonisolated static func unpackUpdateZip(_ zipData: Data) throws -> URL {
+        let fm = FileManager.default
+        let stagingDir = fm.temporaryDirectory
+            .appendingPathComponent("aum-update-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+        let zipFile = stagingDir.appendingPathComponent("update.zip")
+        try zipData.write(to: zipFile, options: .atomic)
+
+        let unpackDir = stagingDir.appendingPathComponent("unpacked", isDirectory: true)
+        try fm.createDirectory(at: unpackDir, withIntermediateDirectories: true)
+
+        let ditto = Process()
+        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        ditto.arguments = ["-x", "-k", zipFile.path, unpackDir.path]
+        try ditto.run()
+        ditto.waitUntilExit()
+        guard ditto.terminationStatus == 0 else {
+            throw NSError(domain: "UpdateInstaller", code: Int(ditto.terminationStatus), userInfo: [
+                NSLocalizedDescriptionKey: "解压安装包失败",
+            ])
+        }
+
+        let contents = try fm.contentsOfDirectory(at: unpackDir, includingPropertiesForKeys: nil)
+        guard let appBundle = contents.first(where: { $0.pathExtension == "app" }) else {
+            throw NSError(domain: "UpdateInstaller", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "安装包内未找到 .app 文件",
+            ])
+        }
+        return appBundle
+    }
+
+    private static func launchRelaunchScript(replacing target: URL, with source: URL) throws {
+        func shellQuote(_ path: String) -> String {
+            "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        }
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let stagingRoot = source.deletingLastPathComponent().deletingLastPathComponent()
+        let script = """
+        #!/bin/zsh
+        while /bin/kill -0 \(pid) 2>/dev/null; do
+          sleep 0.2
+        done
+        /bin/rm -rf \(shellQuote(target.path))
+        /usr/bin/ditto \(shellQuote(source.path)) \(shellQuote(target.path))
+        /usr/bin/xattr -dr com.apple.quarantine \(shellQuote(target.path)) 2>/dev/null || true
+        /usr/bin/open \(shellQuote(target.path))
+        /bin/rm -rf \(shellQuote(stagingRoot.path))
+        """
+        let scriptFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aum-relaunch-\(UUID().uuidString).zsh")
+        try Data(script.utf8).write(to: scriptFile, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptFile.path)
+
+        let runner = Process()
+        runner.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        runner.arguments = ["-c", "nohup /bin/zsh \(shellQuote(scriptFile.path)) >/dev/null 2>&1 &"]
+        try runner.run()
+        runner.waitUntilExit()
+
+        NSApp.terminate(nil)
     }
 
     func openUpdateReleasePage() {
@@ -156,6 +332,8 @@ final class UsageMonitorStore {
     func dismissAvailableUpdate() {
         if let version = availableUpdate?.version {
             preferences.dismissedUpdateVersion = version
+            let zh = preferences.language.isChinese
+            updateStatusText = zh ? "已忽略 v\(version)，仍可随时更新" : "Skipped v\(version). Still available."
         }
     }
 

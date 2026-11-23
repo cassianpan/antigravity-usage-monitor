@@ -268,13 +268,46 @@ struct UsageCoreSelfTest {
             check(sl?["command"] as? String == customScript.path && sl?["padding"] as? Int == 1, "Exact original statusLine restored")
         }
 
-        runCase("S4: AppVersionComparator compares semantic versions accurately") {
+        runCase("S4: AppVersionComparator & UpdateChecker parse release assets and verify SHA-256") {
             check(AppVersionComparator.isNewer("v0.1.3", than: "0.1.2") == true, "0.1.3 > 0.1.2")
             check(AppVersionComparator.isNewer("v0.2.0", than: "0.1.9") == true, "0.2.0 > 0.1.9")
             check(AppVersionComparator.isNewer("1.0.0", than: "0.9.9") == true, "1.0.0 > 0.9.9")
             check(AppVersionComparator.isNewer("v0.1.3", than: "0.1.3") == false, "0.1.3 == 0.1.3")
             check(AppVersionComparator.isNewer("v0.1.2", than: "0.1.3") == false, "0.1.2 < 0.1.3")
             check(AppVersionComparator.isNewer("v0.1.3-beta.1", than: "0.1.2") == true, "Pre-release suffix stripped")
+
+            let sampleJSON = """
+            {
+              "tag_name": "v0.1.4",
+              "html_url": "https://github.com/cassianpan/antigravity-usage-monitor/releases/tag/v0.1.4",
+              "body": "## What's New\\n- In-app updater",
+              "assets": [
+                {"name": "AntigravityUsageMonitor-0.1.4-macOS-arm64.dmg", "browser_download_url": "https://example.com/app.dmg"},
+                {"name": "AntigravityUsageMonitor-0.1.4-macOS-arm64.zip", "browser_download_url": "https://example.com/app.zip"},
+                {"name": "SHA256SUMS.txt", "browser_download_url": "https://example.com/SHA256SUMS.txt"}
+              ]
+            }
+            """
+            let res = try UpdateChecker.decodeGitHubRelease(Data(sampleJSON.utf8), currentVersion: "0.1.3")
+            if case .updateAvailable(let info) = res {
+                check(info.version == "0.1.4", "Expected 0.1.4")
+                check(info.zipURL?.absoluteString == "https://example.com/app.zip", "Expected macOS zip asset URL")
+                check(info.checksumsURL?.absoluteString == "https://example.com/SHA256SUMS.txt", "Expected SHA256SUMS.txt URL")
+                check(info.releaseNotes.contains("In-app updater"), "Expected release notes body")
+            } else {
+                check(false, "Expected .updateAvailable")
+            }
+
+            let payload = Data("hello-antigravity".utf8)
+            let expected = UpdateChecker.sha256Hex(of: payload)
+            let sumsText = """
+            aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  AntigravityUsageMonitor-0.1.4-macOS-arm64.dmg
+            \(expected)  AntigravityUsageMonitor-0.1.4-macOS-arm64.zip
+            """
+            let parsed = UpdateChecker.parseSHA256(from: sumsText, matchingFileName: "AntigravityUsageMonitor-0.1.4-macOS-arm64.zip")
+            check(parsed == expected, "SHA256SUMS parser must match exact zip filename")
+            check(UpdateChecker.verifySHA256(data: payload, expectedHex: expected) == true, "SHA-256 verify must succeed")
+            check(UpdateChecker.verifySHA256(data: Data("tampered".utf8), expectedHex: expected) == false, "SHA-256 verify must reject tampered data")
         }
 
         print("Summary: \(runner.passed) assertions passed, \(runner.failed) failed.")

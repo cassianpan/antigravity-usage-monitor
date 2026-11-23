@@ -541,7 +541,7 @@ struct SettingsView: View {
                         Text(zh ? "软件更新" : "Software updates")
                             .font(.system(size: 12.5))
                             .foregroundStyle(Palette.text)
-                        Text(zh ? "当前版本 v\(store.currentAppVersion) · 自动检查 GitHub 新版本" : "Current v\(store.currentAppVersion) · Check GitHub Releases automatically")
+                        Text(zh ? "当前版本 v\(store.currentAppVersion) · 每 12 小时自动检查 GitHub 新版本" : "Current v\(store.currentAppVersion) · Auto-check GitHub Releases every 12h")
                             .font(.system(size: 10.5))
                             .foregroundStyle(Palette.tertiary)
                     }
@@ -552,48 +552,91 @@ struct SettingsView: View {
                         .tint(Palette.accent)
                 }
 
-                HStack(spacing: 8) {
-                    Button {
-                        Task { await store.checkForUpdates(manual: true) }
-                    } label: {
-                        Text(store.isCheckingUpdates ? (zh ? "检查中…" : "Checking…") : (zh ? "检查更新" : "Check now"))
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundStyle(Palette.text)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.75)
-                            )
+                if let fraction = store.updateDownloadFraction {
+                    HStack(spacing: 8) {
+                        ThinBar(
+                            fraction: fraction,
+                            color: Palette.accent,
+                            height: 5
+                        )
+                        Text("\(Int(round(fraction * 100)))%")
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Palette.accent)
+                            .frame(width: 34, alignment: .trailing)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(store.isCheckingUpdates)
+                }
 
-                    if store.availableUpdate != nil {
+                HStack(spacing: 8) {
+                    if let update = store.availableUpdate {
+                        Button {
+                            Task { await store.installAvailableUpdate() }
+                        } label: {
+                            Text(store.updatePhase.isBusy
+                                 ? (zh ? "更新中…" : "Updating…")
+                                 : (zh ? "立即更新到 v\(update.version)" : "Update to v\(update.version)"))
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .foregroundStyle(Color(hex: 0x0A1930))
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 5)
+                                .background(Palette.accent, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!store.canInstallUpdateInPlace)
+
+                        if !store.isUpdateDismissed && !store.updatePhase.isBusy {
+                            Button {
+                                store.dismissAvailableUpdate()
+                            } label: {
+                                Text(zh ? "忽略此版本" : "Skip")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(Palette.secondary)
+                                    .padding(.horizontal, 9)
+                                    .padding(.vertical, 5)
+                                    .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+
                         Button {
                             store.openUpdateReleasePage()
                         } label: {
-                            Text(zh ? "前往下载" : "Download")
-                                .font(.system(size: 11.5, weight: .medium))
-                                .foregroundStyle(Color(hex: 0x0A1930))
-                                .padding(.horizontal, 10)
+                            Text("GitHub")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Palette.secondary)
+                                .padding(.horizontal, 8)
                                 .padding(.vertical, 5)
-                                .background(Palette.accent, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                         }
                         .buttonStyle(.plain)
 
                         Button {
                             store.copyBrewUpgradeCommand()
                         } label: {
-                            Text(store.copiedBrewUpgrade ? (zh ? "已复制命令" : "Copied") : (zh ? "复制 brew 升级" : "Copy brew cmd"))
-                                .font(.system(size: 11, weight: .medium))
+                            Text(store.copiedBrewUpgrade ? (zh ? "已复制" : "Copied") : "brew")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
                                 .foregroundStyle(Palette.secondary)
-                                .padding(.horizontal, 9)
+                                .padding(.horizontal, 8)
                                 .padding(.vertical, 5)
                                 .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                         }
                         .buttonStyle(.plain)
+                    } else {
+                        Button {
+                            Task { await store.checkForUpdates(manual: true) }
+                        } label: {
+                            Text(store.isCheckingUpdates ? (zh ? "检查中…" : "Checking…") : (zh ? "检查更新" : "Check now"))
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(Palette.text)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.75)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(store.updatePhase.isBusy)
                     }
 
                     Spacer()
@@ -604,6 +647,23 @@ struct SettingsView: View {
                             .foregroundStyle(store.availableUpdate != nil ? Palette.accent : Palette.tertiary)
                             .lineLimit(1)
                     }
+                }
+
+                if let update = store.availableUpdate, !update.releaseNotes.isEmpty {
+                    ScrollView(.vertical, showsIndicators: true) {
+                        Text(update.releaseNotes)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Palette.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .padding(10)
+                    }
+                    .frame(maxHeight: 130)
+                    .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.75)
+                    )
                 }
             }
         }
