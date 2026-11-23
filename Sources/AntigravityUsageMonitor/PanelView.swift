@@ -9,40 +9,52 @@ struct PanelView: View {
     let onOpenSettings: () -> Void
     let onRefresh: () -> Void
     let onQuit: () -> Void
+    var onToggleDisclosure: (String, Bool) -> Void = { _, _ in }
+    var onPreferredHeightChange: @MainActor @Sendable (CGFloat) -> Void = { _ in }
 
     var body: some View {
         let l10n = preferences.l10n
-        VStack(spacing: 0) {
-            headerBar(l10n: l10n)
+        TopPinnedRootLayout {
+            VStack(spacing: 0) {
+                headerBar(l10n: l10n)
 
-            VStack(alignment: .leading, spacing: 0) {
-                if preferences.processesSectionDensity != .hidden {
-                    processesRow(l10n: l10n)
-                    panelDivider
+                VStack(alignment: .leading, spacing: 0) {
+                    if preferences.processesSectionDensity != .hidden {
+                        processesRow(l10n: l10n)
+                        panelDivider
+                    }
+
+                    if preferences.quotaSectionDensity != .hidden {
+                        limitsSection(l10n: l10n)
+                        panelDivider
+                    }
+
+                    if preferences.showEstimatedOutputSpeed && preferences.contextSectionDensity != .hidden {
+                        contextSection(l10n: l10n)
+                        panelDivider
+                    }
+
+                    if preferences.spendSectionDensity != .hidden {
+                        spendSection(l10n: l10n)
+                    }
                 }
 
-                if preferences.quotaSectionDensity != .hidden {
-                    limitsSection(l10n: l10n)
-                    panelDivider
-                }
-
-                if preferences.showEstimatedOutputSpeed && preferences.contextSectionDensity != .hidden {
-                    contextSection(l10n: l10n)
-                    panelDivider
-                }
-
-                if preferences.spendSectionDensity != .hidden {
-                    spendSection(l10n: l10n)
+                panelDivider
+                footerBar(l10n: l10n)
+            }
+            .frame(width: Metrics.popoverWidth)
+            .background(PanelBackground())
+            .panelTipOverlay(center: tipCenter)
+            .padding(Metrics.shadowInset)
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.height
+            } action: { newHeight in
+                Task { @MainActor in
+                    onPreferredHeightChange(newHeight)
                 }
             }
-
-            panelDivider
-            footerBar(l10n: l10n)
         }
-        .frame(width: Metrics.popoverWidth)
-        .background(PanelBackground())
-        .panelTipOverlay(center: tipCenter)
-        .padding(Metrics.shadowInset)
         .preferredColorScheme(.dark)
     }
 
@@ -200,9 +212,14 @@ struct PanelView: View {
                         onAction: { store.openTerminalToConnectCLI() }
                     )
                 } else {
-                    VStack(spacing: 9) {
-                        ForEach(store.officialReport.buckets) { bucket in
-                            limitRow(bucket: bucket, l10n: l10n, isSimple: preferences.quotaSectionDensity == .simple)
+                    let groups = groupedQuotaBuckets(store.officialReport.buckets, l10n: l10n)
+                    let isSimple = preferences.quotaSectionDensity == .simple
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(Array(groups.enumerated()), id: \.element.id) { idx, group in
+                            if idx > 0 {
+                                Hairline()
+                            }
+                            quotaGroupView(group: group, l10n: l10n, isSimple: isSimple)
                         }
                     }
 
@@ -226,13 +243,184 @@ struct PanelView: View {
         .padding(.vertical, 10)
     }
 
-    private func limitRow(bucket: QuotaBucketEvaluation, l10n: L10n, isSimple: Bool) -> some View {
+    private struct QuotaBucketGroup: Identifiable {
+        let id: String
+        let title: String
+        let accent: Color
+        let isPrimary: Bool
+        let buckets: [QuotaBucketEvaluation]
+
+        var isAllUnused: Bool {
+            buckets.allSatisfy { $0.usedPercentageInt == 0 && $0.resetTime == nil && !$0.isResetElapsed }
+        }
+    }
+
+    private func groupedQuotaBuckets(_ buckets: [QuotaBucketEvaluation], l10n: L10n) -> [QuotaBucketGroup] {
+        var bucketMap: [String: [QuotaBucketEvaluation]] = [:]
+        for bucket in buckets {
+            let key = quotaGroupKey(for: bucket.bucketId)
+            bucketMap[key, default: []].append(bucket)
+        }
+
+        let orderRank: (String) -> Int = { key in
+            switch key {
+            case "gemini": return 0
+            case "3p": return 1
+            default: return 2
+            }
+        }
+        let windowRank: (QuotaWindowKind) -> Int = { kind in
+            switch kind {
+            case .fiveHour: return 0
+            case .weekly: return 1
+            case .other: return 2
+            }
+        }
+
+        return bucketMap.keys.sorted { lhs, rhs in
+            if orderRank(lhs) != orderRank(rhs) {
+                return orderRank(lhs) < orderRank(rhs)
+            }
+            return lhs < rhs
+        }.map { key in
+            let sortedBuckets = (bucketMap[key] ?? []).sorted { a, b in
+                if windowRank(a.windowKind) != windowRank(b.windowKind) {
+                    return windowRank(a.windowKind) < windowRank(b.windowKind)
+                }
+                return a.bucketId < b.bucketId
+            }
+            let title: String
+            let accent: Color
+            switch key {
+            case "gemini":
+                title = "Gemini"
+                accent = Palette.accent
+            case "3p":
+                title = l10n.zh ? "第三方模型" : "Third-Party"
+                accent = Color(hex: 0xC4B5FD)
+            default:
+                title = key.capitalized
+                accent = Palette.secondary
+            }
+            return QuotaBucketGroup(
+                id: key,
+                title: title,
+                accent: accent,
+                isPrimary: key == "gemini",
+                buckets: sortedBuckets
+            )
+        }
+    }
+
+    private func quotaGroupKey(for bucketId: String) -> String {
+        let lower = bucketId.lowercased()
+        if lower.contains("gemini") { return "gemini" }
+        if lower.contains("3p") || lower.contains("third") { return "3p" }
+        if lower.contains("claude") { return "claude" }
+        if lower.contains("gpt") { return "gpt" }
+        return lower
+            .replacingOccurrences(of: "-5h", with: "")
+            .replacingOccurrences(of: "-weekly", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func quotaRowShortTitle(for bucket: QuotaBucketEvaluation, l10n: L10n) -> String {
+        switch bucket.windowKind {
+        case .fiveHour:
+            return l10n.zh ? "5 小时" : "5-hour"
+        case .weekly:
+            return l10n.zh ? "本周" : "Weekly"
+        case .other:
+            return bucket.displayName
+        }
+    }
+
+    @ViewBuilder
+    private func quotaGroupView(group: QuotaBucketGroup, l10n: L10n, isSimple: Bool) -> some View {
+        let canAutoCollapse = !group.isPrimary && group.isAllUnused
+        let isExpanded = !canAutoCollapse || interaction.expandedUnusedQuotaGroups.contains(group.id)
+        let disclosureKey = "quota.\(group.id)"
+        let revealProgress = canAutoCollapse
+            ? interaction.progress(for: disclosureKey, defaultExpanded: isExpanded)
+            : 1.0
+
+        VStack(alignment: .leading, spacing: 0) {
+            if canAutoCollapse {
+                Button {
+                    let nextExpanded = !interaction.expandedUnusedQuotaGroups.contains(group.id)
+                    if nextExpanded {
+                        _ = interaction.expandedUnusedQuotaGroups.insert(group.id)
+                    } else {
+                        _ = interaction.expandedUnusedQuotaGroups.remove(group.id)
+                    }
+                    onToggleDisclosure(disclosureKey, nextExpanded)
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(group.title)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(group.accent)
+                        Text(l10n.zh ? "本周期未使用" : "Not used yet")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Palette.tertiary)
+                            .opacity(max(0, 1.0 - revealProgress * 2.0))
+                        Spacer()
+                        HStack(spacing: 4) {
+                            ZStack(alignment: .trailing) {
+                                Text("0%")
+                                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Palette.tertiary)
+                                    .opacity(max(0, 1.0 - revealProgress * 2.0))
+                                Text(l10n.zh ? "收起" : "Hide")
+                                    .font(.system(size: 10.5, weight: .regular))
+                                    .foregroundStyle(Palette.tertiary)
+                                    .opacity(max(0, (revealProgress - 0.5) * 2.0))
+                            }
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 8.5, weight: .semibold))
+                                .foregroundStyle(Palette.tertiary)
+                                .rotationEffect(.degrees(revealProgress * 180.0))
+                        }
+                    }
+                    .frame(height: 16)
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(FlatDisclosureButtonStyle())
+            } else {
+                HStack {
+                    Text(group.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(group.accent)
+                    Spacer()
+                }
+            }
+
+            DisclosureRevealContainer(progress: revealProgress) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(group.buckets) { bucket in
+                        limitRow(
+                            bucket: bucket,
+                            rowTitle: quotaRowShortTitle(for: bucket, l10n: l10n),
+                            l10n: l10n,
+                            isSimple: isSimple
+                        )
+                    }
+                }
+                .padding(.top, 8)
+            }
+            .opacity(min(1.0, revealProgress * 1.15))
+            .allowsHitTesting(revealProgress > 0.5)
+            .accessibilityHidden(revealProgress <= 0.01)
+        }
+    }
+
+    private func limitRow(bucket: QuotaBucketEvaluation, rowTitle: String, l10n: L10n, isSimple: Bool) -> some View {
         let levelColor = Palette.levelColor(for: bucket.usedFraction, overPace: bucket.isOverPace)
         let isHovered = interaction.hoveredBucketId == bucket.bucketId
 
         return VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
-                Text(bucket.displayName)
+                Text(rowTitle)
                     .font(.system(size: 12.5, weight: .regular))
                     .foregroundStyle(Palette.text)
                 Spacer()
@@ -265,21 +453,26 @@ struct PanelView: View {
 
             if !isSimple {
                 HStack {
-                    if isHovered, let safe = bucket.safeLineFraction, !bucket.isResetElapsed {
-                        let headroom = max(0, safe - bucket.usedFraction)
+                    if isHovered, let safePct = bucket.safeLinePercentageInt, !bucket.isResetElapsed {
+                        let headroomPct = max(0, safePct - bucket.usedPercentageInt)
                         Text(
                             bucket.isOverPace
-                                ? "\(l10n.safeLine)\(UsageFormatter.percentage(safe)) · \(l10n.zh ? "已超速" : "Over pace")"
-                                : "\(l10n.safeLine)\(UsageFormatter.percentage(safe)) · \(l10n.zh ? "安全余量 " : "Headroom ")\(UsageFormatter.percentage(headroom))"
+                                ? "\(l10n.safeLine)\(safePct)% · \(l10n.zh ? "已超速" : "Over pace")"
+                                : "\(l10n.safeLine)\(safePct)% · \(l10n.zh ? "安全余量 " : "Headroom ")\(headroomPct)%"
                         )
                         .font(.system(size: 10.5))
                         .foregroundStyle(bucket.isOverPace ? Palette.critical : Palette.secondary)
+                        .lineLimit(1)
                     } else if bucket.isResetElapsed {
                         Text(l10n.resetDone)
                             .font(.system(size: 10.5))
                             .foregroundStyle(Palette.tertiary)
                     } else if let secs = bucket.remainingSecondsUntilReset {
                         Text("\(l10n.resetsIn)\(UsageFormatter.countdown(secs))")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Palette.tertiary)
+                    } else {
+                        Text(l10n.zh ? "本周期未使用" : "Not used yet")
                             .font(.system(size: 10.5))
                             .foregroundStyle(Palette.tertiary)
                     }
@@ -292,17 +485,19 @@ struct PanelView: View {
     private func limitTip(bucket: QuotaBucketEvaluation, l10n: L10n) -> Tip {
         var rows: [Tip.Row] = [
             Tip.Row(l10n.zh ? "已用" : "Used", "\(bucket.usedPercentageInt)%"),
-            Tip.Row(l10n.zh ? "剩余" : "Remaining", UsageFormatter.percentage(bucket.remainingFraction)),
+            Tip.Row(l10n.zh ? "剩余" : "Remaining", "\(bucket.remainingPercentageInt)%"),
         ]
-        if let safe = bucket.safeLineFraction, !bucket.isResetElapsed {
+        if let safePct = bucket.safeLinePercentageInt, !bucket.isResetElapsed {
             rows.append(Tip.Row(
                 l10n.zh ? "此刻安全线" : "Safe line",
-                UsageFormatter.percentage(safe),
+                "\(safePct)%",
                 color: bucket.isOverPace ? Palette.critical : Palette.safeGreen
             ))
         }
         if let secs = bucket.remainingSecondsUntilReset, !bucket.isResetElapsed {
             rows.append(Tip.Row(l10n.zh ? "距离重置" : "Resets in", UsageFormatter.countdown(secs), separated: true))
+        } else if bucket.resetTime == nil && !bucket.isResetElapsed {
+            rows.append(Tip.Row(l10n.zh ? "周期状态" : "Window", l10n.zh ? "本周期未使用" : "Not used yet", separated: true))
         }
         return Tip(title: bucket.displayName, rows: rows)
     }
@@ -409,10 +604,9 @@ struct PanelView: View {
                             if interaction.showSpeedDotChart {
                                 // Detailed mode header right: 1-hour summary (tap to switch back)
                                 Button {
-                                    withAnimation(.easeOut(duration: 0.18)) {
-                                        interaction.showSpeedDotChart = false
-                                        interaction.hoveredDotSampleId = nil
-                                    }
+                                    interaction.showSpeedDotChart = false
+                                    interaction.hoveredDotSampleId = nil
+                                    onToggleDisclosure("speedDotChart", false)
                                 } label: {
                                     VStack(alignment: .trailing, spacing: 2) {
                                         if let s1 = speed.recent1hTokPerSec {
@@ -433,52 +627,56 @@ struct PanelView: View {
                                     hoveredIndex: interaction.hoveredSparkSampleIndex,
                                     onHoverIndex: { interaction.hoveredSparkSampleIndex = $0 },
                                     onTap: {
-                                        withAnimation(.easeOut(duration: 0.18)) {
-                                            interaction.hoveredSparkSampleIndex = nil
-                                            interaction.showSpeedDotChart = true
-                                        }
+                                        interaction.hoveredSparkSampleIndex = nil
+                                        interaction.showSpeedDotChart = true
+                                        onToggleDisclosure("speedDotChart", true)
                                     }
                                 )
                             }
                         }
 
-                        if interaction.showSpeedDotChart && !speed.samples.isEmpty {
-                            VStack(alignment: .leading, spacing: 4) {
-                                SpeedDotChartView(
-                                    samples: speed.samples,
-                                    now: store.localReport.updatedAt,
-                                    hoveredSampleId: interaction.hoveredDotSampleId,
-                                    onHoverSample: { interaction.hoveredDotSampleId = $0 },
-                                    onTap: {
-                                        withAnimation(.easeOut(duration: 0.18)) {
+                        let speedChartProgress = interaction.progress(
+                            for: "speedDotChart",
+                            defaultExpanded: interaction.showSpeedDotChart
+                        )
+                        if speedChartProgress > 0 && !speed.samples.isEmpty {
+                            DisclosureRevealContainer(progress: speedChartProgress) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    SpeedDotChartView(
+                                        samples: speed.samples,
+                                        now: store.localReport.updatedAt,
+                                        hoveredSampleId: interaction.hoveredDotSampleId,
+                                        onHoverSample: { interaction.hoveredDotSampleId = $0 },
+                                        onTap: {
                                             interaction.hoveredDotSampleId = nil
                                             interaction.showSpeedDotChart = false
+                                            onToggleDisclosure("speedDotChart", false)
                                         }
-                                    }
-                                )
+                                    )
 
-                                HStack {
-                                    if let dot = hoveredDotSample {
-                                        Text("\(timeFmt.string(from: dot.timestamp)) · ~\(Int(round(dot.tokensPerSec))) tok/s · \(UsageFormatter.compactTokens(dot.outputTokens)) tokens · \(dot.modelDisplayName)")
-                                            .font(.system(size: 10, design: .monospaced))
-                                            .foregroundStyle(Palette.secondary)
-                                            .lineLimit(1)
-                                    } else {
-                                        Text(l10n.zh ? "1 小时前" : "1h ago")
-                                            .font(.system(size: 9.5))
-                                            .foregroundStyle(Palette.tertiary)
-                                        Spacer()
-                                        Text(l10n.zh ? "点击图表切换折线" : "Click to toggle sparkline")
-                                            .font(.system(size: 9.5))
-                                            .foregroundStyle(Palette.quaternary)
-                                        Spacer()
-                                        Text(l10n.zh ? "现在" : "Now")
-                                            .font(.system(size: 9.5))
-                                            .foregroundStyle(Palette.tertiary)
+                                    HStack {
+                                        if let dot = hoveredDotSample {
+                                            Text("\(timeFmt.string(from: dot.timestamp)) · ~\(Int(round(dot.tokensPerSec))) tok/s · \(UsageFormatter.compactTokens(dot.outputTokens)) tokens · \(dot.modelDisplayName)")
+                                                .font(.system(size: 10, design: .monospaced))
+                                                .foregroundStyle(Palette.secondary)
+                                                .lineLimit(1)
+                                        } else {
+                                            Text(l10n.zh ? "1 小时前" : "1h ago")
+                                                .font(.system(size: 9.5))
+                                                .foregroundStyle(Palette.tertiary)
+                                            Spacer()
+                                            Text(l10n.zh ? "点击图表切换折线" : "Click to toggle sparkline")
+                                                .font(.system(size: 9.5))
+                                                .foregroundStyle(Palette.quaternary)
+                                            Spacer()
+                                            Text(l10n.zh ? "现在" : "Now")
+                                                .font(.system(size: 9.5))
+                                                .foregroundStyle(Palette.tertiary)
+                                        }
                                     }
                                 }
                             }
-                            .transition(.opacity)
+                            .opacity(min(1.0, speedChartProgress * 1.15))
                         }
 
                         if hasActiveCtx, let ctx, preferences.contextSectionDensity == .detailed {
@@ -586,9 +784,7 @@ struct PanelView: View {
                         let hovered = interaction.hoveredTab == tab && !selected
                         Button {
                             guard preferences.selectedSpendTab != tab else { return }
-                            withAnimation(.easeOut(duration: 0.14)) {
-                                preferences.selectedSpendTab = tab
-                            }
+                            preferences.selectedSpendTab = tab
                         } label: {
                             Text(tab.label(l10n: l10n))
                                 .font(.system(size: 11.5, weight: selected ? .medium : .regular))
@@ -621,7 +817,7 @@ struct PanelView: View {
                     guard preferences.selectedSpendTab != .today,
                           let weekly = store.officialReport.primaryWeekly,
                           !weekly.isResetElapsed,
-                          weekly.usedFraction >= 0.01,
+                          weekly.usedFraction >= 0.10,
                           store.localReport.week.estimatedCostUSD > 0 else {
                         return nil
                     }
@@ -968,5 +1164,67 @@ struct PanelView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+    }
+}
+
+private struct TopPinnedRootLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        let childSize = child.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        if let proposedHeight = proposal.height, proposedHeight.isFinite, proposedHeight < 10_000 {
+            return CGSize(width: childSize.width, height: proposedHeight)
+        }
+        return childSize
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let child = subviews.first else { return }
+        let childSize = child.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+        child.place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: childSize.height)
+        )
+    }
+}
+
+private struct FlatDisclosureButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+    }
+}
+
+private struct DisclosureRevealLayout: Layout {
+    var progress: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let clamped = max(0, min(1, progress))
+        guard clamped > 0, let child = subviews.first else {
+            return CGSize(width: proposal.width ?? 0, height: 0)
+        }
+        let full = child.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(width: full.width, height: full.height * clamped)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard progress > 0, let child = subviews.first else { return }
+        let full = child.sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+        child.place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: full.height)
+        )
+    }
+}
+
+private struct DisclosureRevealContainer<Content: View>: View {
+    let progress: CGFloat
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        DisclosureRevealLayout(progress: progress) {
+            content
+        }
+        .clipped()
     }
 }

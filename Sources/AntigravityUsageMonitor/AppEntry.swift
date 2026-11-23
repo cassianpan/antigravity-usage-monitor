@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 import UsageCore
 
@@ -6,10 +7,13 @@ import UsageCore
 @MainActor
 final class FloatingPanel: NSPanel {
     var onCloseRequested: (() -> Void)?
+    /// Top screen Y coordinate to keep pinned whenever content height changes.
+    var anchoredTopY: CGFloat?
 
     init(contentViewController: NSViewController) {
+        let initialWidth = Metrics.popoverWidth + Metrics.shadowInset * 2
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: Metrics.popoverWidth, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: initialWidth, height: 480),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -24,6 +28,27 @@ final class FloatingPanel: NSPanel {
         self.appearance = NSAppearance(named: .darkAqua)
     }
 
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        // Allow transparent shadowInset padding to overlap the menu bar area so topY stays exact.
+        frameRect
+    }
+
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        var adjusted = frameRect
+        if let topY = anchoredTopY {
+            adjusted.origin.y = topY - adjusted.size.height
+        }
+        super.setFrame(adjusted, display: flag)
+    }
+
+    override func setFrame(_ frameRect: NSRect, display displayFlag: Bool, animate animateFlag: Bool) {
+        var adjusted = frameRect
+        if let topY = anchoredTopY {
+            adjusted.origin.y = topY - adjusted.size.height
+        }
+        super.setFrame(adjusted, display: displayFlag, animate: animateFlag)
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
@@ -34,6 +59,13 @@ final class FloatingPanel: NSPanel {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private struct DisclosureTrack {
+        var startValue: Double
+        var targetValue: Double
+        var startTime: CFTimeInterval
+        var duration: CFTimeInterval
+    }
+
     private let preferences = AppPreferences()
     private let tipCenter = TipCenter()
     private let interaction = PanelInteractionState()
@@ -46,6 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var localKeyMonitor: Any?
     private var menuBarSpinTimer: Timer?
     private var menuBarSpinAngle: CGFloat = 0
+    private var disclosureTracks: [String: DisclosureTrack] = [:]
+    private var disclosureDisplayLink: CADisplayLink?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -68,9 +102,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 interaction: interaction,
                 onOpenSettings: { [weak self] in self?.openSettingsWindow() },
                 onRefresh: { [weak self] in self?.triggerRefreshWithSpin() },
-                onQuit: { NSApp.terminate(nil) }
+                onQuit: { NSApp.terminate(nil) },
+                onToggleDisclosure: { [weak self] key, expanded in
+                    self?.toggleDisclosure(key: key, expanded: expanded)
+                },
+                onPreferredHeightChange: { [weak self] height in
+                    self?.handlePreferredHeightChange(height)
+                }
             )
         )
+        hostingController.sizingOptions = []
 
         panel = FloatingPanel(contentViewController: hostingController)
         panel.onCloseRequested = { [weak self] in self?.closePanel() }
@@ -123,6 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func closePanel() {
+        finishAllDisclosureAnimations()
         tipCenter.setActive(false)
         interaction.resetHovers()
         panel.orderOut(nil)
@@ -141,19 +183,134 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button, let buttonWindow = button.window else { return }
         let buttonFrame = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
 
-        hostingController.view.layoutSubtreeIfNeeded()
-        let fittingSize = hostingController.view.fittingSize
         let inset = Metrics.shadowInset
+        let panelWidth = Metrics.popoverWidth + inset * 2
         let screenFrame = buttonWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
         let maxHeight = max(420, screenFrame.height - 24)
-        let panelWidth = Metrics.popoverWidth + inset * 2
-        let panelHeight = min(maxHeight, max(300, fittingSize.height))
+        let fittingSize = hostingController.sizeThatFits(
+            in: CGSize(width: panelWidth, height: .greatestFiniteMagnitude)
+        )
+        let panelHeight = min(maxHeight, max(120, ceil(fittingSize.height)))
 
         var x = buttonFrame.midX - panelWidth / 2.0
         x = max(screenFrame.minX + 4 - inset, min(x, screenFrame.maxX - panelWidth + inset - 4))
-        let y = buttonFrame.minY - panelHeight + inset - 6
+        let topY = buttonFrame.minY + inset - 6
+        let y = topY - panelHeight
 
+        panel.anchoredTopY = topY
         panel.setFrame(NSRect(x: x, y: y, width: panelWidth, height: panelHeight), display: true)
+        hostingController.view.layoutSubtreeIfNeeded()
+    }
+
+    private func clampedPanelHeight(for preferredHeight: CGFloat) -> CGFloat {
+        let screenFrame = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        let maxHeight = max(420, screenFrame.height - 24)
+        return min(maxHeight, max(120, ceil(preferredHeight)))
+    }
+
+    private func applyPanelHeight(_ preferredHeight: CGFloat) {
+        guard preferredHeight > 0 else { return }
+        let targetHeight = clampedPanelHeight(for: preferredHeight)
+        let current = panel.frame
+        guard abs(current.height - targetHeight) > 0.5 else { return }
+        let topY = panel.anchoredTopY ?? current.maxY
+        panel.setFrame(
+            NSRect(x: current.origin.x, y: topY - targetHeight, width: current.width, height: targetHeight),
+            display: false,
+            animate: false
+        )
+    }
+
+    private func handlePreferredHeightChange(_ newHeight: CGFloat) {
+        guard panel.isVisible, disclosureTracks.isEmpty, newHeight > 0 else { return }
+        let targetHeight = clampedPanelHeight(for: newHeight)
+        guard abs(panel.frame.height - targetHeight) > 0.5 else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        applyPanelHeight(newHeight)
+        hostingController.view.layoutSubtreeIfNeeded()
+    }
+
+    private func toggleDisclosure(key: String, expanded: Bool) {
+        let target = expanded ? 1.0 : 0.0
+        if !panel.isVisible || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            disclosureTracks.removeValue(forKey: key)
+            interaction.disclosureProgress[key] = target
+            if panel.isVisible {
+                syncPanelHeightNow()
+            }
+            return
+        }
+
+        let current = interaction.disclosureProgress[key] ?? (expanded ? 0.0 : 1.0)
+        let distance = abs(target - current)
+        guard distance > 0.001 else {
+            interaction.disclosureProgress[key] = target
+            return
+        }
+
+        disclosureTracks[key] = DisclosureTrack(
+            startValue: current,
+            targetValue: target,
+            startTime: CACurrentMediaTime(),
+            duration: max(0.05, 0.18 * distance)
+        )
+        interaction.disclosureProgress[key] = current
+
+        if disclosureDisplayLink == nil {
+            let link = panel.displayLink(target: self, selector: #selector(stepDisclosureAnimation(_:)))
+            link.add(to: .main, forMode: .common)
+            disclosureDisplayLink = link
+        }
+    }
+
+    @objc private func stepDisclosureAnimation(_ link: CADisplayLink) {
+        let now = CACurrentMediaTime()
+        var completedKeys: [String] = []
+
+        for (key, track) in disclosureTracks {
+            let t = min(1.0, max(0.0, (now - track.startTime) / track.duration))
+            let eased = 1.0 - pow(1.0 - t, 3.0)
+            let value = track.startValue + (track.targetValue - track.startValue) * eased
+            interaction.disclosureProgress[key] = value
+            if t >= 1.0 {
+                interaction.disclosureProgress[key] = track.targetValue
+                completedKeys.append(key)
+            }
+        }
+
+        for key in completedKeys {
+            disclosureTracks.removeValue(forKey: key)
+        }
+
+        if disclosureTracks.isEmpty {
+            disclosureDisplayLink?.invalidate()
+            disclosureDisplayLink = nil
+        }
+
+        syncPanelHeightNow()
+    }
+
+    private func syncPanelHeightNow() {
+        let panelWidth = Metrics.popoverWidth + Metrics.shadowInset * 2
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        let fittingSize = hostingController.sizeThatFits(
+            in: CGSize(width: panelWidth, height: .greatestFiniteMagnitude)
+        )
+        applyPanelHeight(fittingSize.height)
+        hostingController.view.layoutSubtreeIfNeeded()
+    }
+
+    private func finishAllDisclosureAnimations() {
+        disclosureDisplayLink?.invalidate()
+        disclosureDisplayLink = nil
+        for (key, track) in disclosureTracks {
+            interaction.disclosureProgress[key] = track.targetValue
+        }
+        disclosureTracks.removeAll()
     }
 
     private func installDismissMonitors() {

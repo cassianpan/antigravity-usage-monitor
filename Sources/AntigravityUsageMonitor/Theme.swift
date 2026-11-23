@@ -97,6 +97,10 @@ struct GlassEffect: NSViewRepresentable {
             view.cornerRadius = cornerRadius
         }
     }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: MaskedEffectView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
 }
 
 final class MaskedEffectView: NSVisualEffectView {
@@ -151,17 +155,16 @@ struct Hairline: View {
 struct PlanTagView: View {
     let rawTier: String
 
-    private static let tracking: CGFloat = 0.8
+    private static let tracking: CGFloat = 0.2
 
     var body: some View {
         let parsed = parseTier(rawTier)
         Text(parsed.label)
-            .font(.system(size: 9.5, weight: .semibold))
+            .font(.system(size: 10.5, weight: .semibold))
             .tracking(Self.tracking)
             .foregroundStyle(parsed.text)
-            .padding(.leading, 6)
-            .padding(.trailing, 6 - Self.tracking)
-            .frame(height: 17)
+            .padding(.horizontal, 7)
+            .frame(height: 18)
             .background(Capsule().fill(parsed.fill))
             .overlay(Capsule().strokeBorder(parsed.stroke, lineWidth: 1))
             .fixedSize()
@@ -170,15 +173,15 @@ struct PlanTagView: View {
     private func parseTier(_ raw: String) -> (label: String, fill: Color, stroke: Color, text: Color) {
         let lower = raw.lowercased()
         if lower.contains("ultra") {
-            return ("ULTRA", Palette.accent, .clear, Color(hex: 0x0A1930))
+            return ("Ultra", Palette.accent, .clear, Color(hex: 0x0A1930))
         }
         if lower.contains("max") {
-            return ("MAX", Palette.accent.opacity(0.22), .clear, Color(hex: 0x89B4FF))
+            return ("Max", Palette.accent.opacity(0.22), .clear, Color(hex: 0x89B4FF))
         }
         if lower.contains("pro") {
-            return ("PRO", .clear, Palette.accent.opacity(0.65), Color(hex: 0x89B4FF))
+            return ("Pro", .clear, Palette.accent.opacity(0.65), Color(hex: 0x89B4FF))
         }
-        return (raw.uppercased(), Color.white.opacity(0.08), .clear, Palette.secondary)
+        return (raw.capitalized, Color.white.opacity(0.08), .clear, Palette.secondary)
     }
 }
 

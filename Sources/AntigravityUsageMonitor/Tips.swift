@@ -300,6 +300,13 @@ final class PanelInteractionState {
     var hoveredSparkSampleIndex: Int? = nil
     var hoveredDotSampleId: Int? = nil
     var refreshSpinDegrees: Double = 0
+    var expandedUnusedQuotaGroups: Set<String> = []
+    /// 0.0 = collapsed, 1.0 = expanded; driven frame-by-frame by CADisplayLink for lockstep window resizing.
+    var disclosureProgress: [String: Double] = [:]
+
+    func progress(for key: String, defaultExpanded: Bool) -> Double {
+        disclosureProgress[key] ?? (defaultExpanded ? 1.0 : 0.0)
+    }
 
     func triggerRefreshSpin() {
         withAnimation(.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.55)) {
