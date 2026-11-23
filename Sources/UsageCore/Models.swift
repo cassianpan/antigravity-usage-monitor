@@ -183,26 +183,48 @@ public struct BillingPeriodInfo: Sendable, Equatable {
     }
 }
 
+public struct OutputSpeedSample: Sendable, Equatable, Identifiable {
+    public let id: Int
+    public let timestamp: Date
+    public let tokensPerSec: Double
+    public let outputTokens: Int
+    public let modelDisplayName: String
+
+    public init(id: Int, timestamp: Date, tokensPerSec: Double, outputTokens: Int, modelDisplayName: String) {
+        self.id = id
+        self.timestamp = timestamp
+        self.tokensPerSec = tokensPerSec
+        self.outputTokens = outputTokens
+        self.modelDisplayName = modelDisplayName
+    }
+}
+
 public struct OutputSpeedSnapshot: Sendable, Equatable {
     public let recent5mTokPerSec: Double?
     public let recent1hTokPerSec: Double?
+    public let recent1hReplyCount: Int
     public let latestModelName: String?
     public let sparkline: [Double]
+    public let samples: [OutputSpeedSample]
     public let isRecentlyActive: Bool
     public let lastResponseAgeSeconds: TimeInterval?
 
     public init(
         recent5mTokPerSec: Double? = nil,
         recent1hTokPerSec: Double? = nil,
+        recent1hReplyCount: Int = 0,
         latestModelName: String? = nil,
         sparkline: [Double] = [],
+        samples: [OutputSpeedSample] = [],
         isRecentlyActive: Bool = false,
         lastResponseAgeSeconds: TimeInterval? = nil
     ) {
         self.recent5mTokPerSec = recent5mTokPerSec
         self.recent1hTokPerSec = recent1hTokPerSec
+        self.recent1hReplyCount = recent1hReplyCount
         self.latestModelName = latestModelName
         self.sparkline = sparkline
+        self.samples = samples
         self.isRecentlyActive = isRecentlyActive
         self.lastResponseAgeSeconds = lastResponseAgeSeconds
     }

@@ -296,6 +296,9 @@ final class PanelInteractionState {
     var hoveredBarIndex: Int? = nil
     var hoveredTab: SpendWindowTab? = nil
     var isLoginButtonHovered: Bool = false
+    var showSpeedDotChart: Bool = false
+    var hoveredSparkSampleIndex: Int? = nil
+    var hoveredDotSampleId: Int? = nil
     var refreshSpinDegrees: Double = 0
 
     func triggerRefreshSpin() {
@@ -310,6 +313,8 @@ final class PanelInteractionState {
         hoveredBarIndex = nil
         hoveredTab = nil
         isLoginButtonHovered = false
+        hoveredSparkSampleIndex = nil
+        hoveredDotSampleId = nil
     }
 }
 

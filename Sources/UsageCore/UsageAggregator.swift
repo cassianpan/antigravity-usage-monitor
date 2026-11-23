@@ -84,7 +84,8 @@ public struct UsageAggregator: Sendable {
         let isActive = lastAge <= 60
 
         // Compute per-turn approximate tok/s within each conversation, clamping outliers.
-        var samples: [(timestamp: Date, speed: Double)] = []
+        var samples: [OutputSpeedSample] = []
+        var nextId = 0
         let byConv = Dictionary(grouping: recent, by: \.conversationId)
         for (_, convRecords) in byConv {
             let sorted = convRecords.sorted { $0.timestamp < $1.timestamp }
@@ -94,28 +95,36 @@ public struct UsageAggregator: Sendable {
                 if i > 0 {
                     dt = rec.timestamp.timeIntervalSince(sorted[i - 1].timestamp)
                 } else {
-                    // Single turn fallback: approximate typical latency window
                     dt = max(3.0, Double(rec.outputTokens) / 45.0)
                 }
                 guard dt >= 2.0 && dt <= 90.0 else { continue }
                 let rawSpeed = Double(rec.outputTokens) / dt
                 let clamped = max(5.0, min(220.0, rawSpeed))
-                samples.append((rec.timestamp, clamped))
+                samples.append(OutputSpeedSample(
+                    id: nextId,
+                    timestamp: rec.timestamp,
+                    tokensPerSec: clamped,
+                    outputTokens: rec.outputTokens,
+                    modelDisplayName: PricingCatalog.displayName(for: rec.model)
+                ))
+                nextId += 1
             }
         }
 
         samples.sort { $0.timestamp < $1.timestamp }
 
         let samples5m = samples.filter { $0.timestamp >= fiveMinutesAgo }
-        let avg5m: Double? = samples5m.isEmpty ? nil : (samples5m.map(\.speed).reduce(0, +) / Double(samples5m.count))
-        let avg1h: Double? = samples.isEmpty ? nil : (samples.map(\.speed).reduce(0, +) / Double(samples.count))
-        let sparkline = Array(samples.suffix(18).map(\.speed))
+        let avg5m: Double? = samples5m.isEmpty ? nil : (samples5m.map(\.tokensPerSec).reduce(0, +) / Double(samples5m.count))
+        let avg1h: Double? = samples.isEmpty ? nil : (samples.map(\.tokensPerSec).reduce(0, +) / Double(samples.count))
+        let sparkline = Array(samples.suffix(18).map(\.tokensPerSec))
 
         return OutputSpeedSnapshot(
             recent5mTokPerSec: avg5m,
             recent1hTokPerSec: avg1h,
+            recent1hReplyCount: samples.count,
             latestModelName: PricingCatalog.displayName(for: latest.model),
             sparkline: sparkline,
+            samples: samples,
             isRecentlyActive: isActive,
             lastResponseAgeSeconds: lastAge
         )

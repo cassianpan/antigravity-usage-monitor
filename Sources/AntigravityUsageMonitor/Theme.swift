@@ -429,9 +429,14 @@ struct MiniBarsView: View {
 }
 
 struct SparklineView: View {
-    let values: [Double]
+    let samples: [OutputSpeedSample]
+    let hoveredIndex: Int?
+    let onHoverIndex: (Int?) -> Void
+    let onTap: () -> Void
 
     var body: some View {
+        let recent = Array(samples.suffix(18))
+        let values = recent.map(\.tokensPerSec)
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
@@ -444,7 +449,7 @@ struct SparklineView: View {
                         for (idx, val) in values.enumerated() {
                             let x = w * CGFloat(idx) / CGFloat(values.count - 1)
                             let norm = (val - minV) / (maxV - minV)
-                            let y = h - CGFloat(norm) * (h - 4) - 2
+                            let y = h - CGFloat(norm) * (h - 6) - 3
                             if idx == 0 {
                                 path.move(to: CGPoint(x: x, y: y))
                             } else {
@@ -452,20 +457,126 @@ struct SparklineView: View {
                             }
                         }
                     }
-                    .stroke(Color.white.opacity(0.45), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                    .stroke(Color.white.opacity(hoveredIndex != nil ? 0.65 : 0.45), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
 
-                    if let last = values.last {
-                        let norm = (last - minV) / (maxV - minV)
-                        let y = h - CGFloat(norm) * (h - 4) - 2
+                    let activeIdx = hoveredIndex ?? (values.count - 1)
+                    if activeIdx >= 0 && activeIdx < values.count {
+                        let x = w * CGFloat(activeIdx) / CGFloat(values.count - 1)
+                        let norm = (values[activeIdx] - minV) / (maxV - minV)
+                        let y = h - CGFloat(norm) * (h - 6) - 3
+                        if hoveredIndex != nil {
+                            Path { p in
+                                p.move(to: CGPoint(x: x, y: 0))
+                                p.addLine(to: CGPoint(x: x, y: h))
+                            }
+                            .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                        }
                         Circle()
                             .fill(Palette.accent)
-                            .frame(width: 4.5, height: 4.5)
-                            .position(x: w, y: y)
+                            .frame(width: hoveredIndex != nil ? 6 : 4.5, height: hoveredIndex != nil ? 6 : 4.5)
+                            .position(x: x, y: y)
                     }
                 }
             }
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let loc):
+                    guard values.count >= 2 else { return }
+                    let ratio = max(0, min(1, loc.x / max(1, w)))
+                    let idx = Int(round(ratio * Double(values.count - 1)))
+                    onHoverIndex(idx)
+                case .ended:
+                    onHoverIndex(nil)
+                }
+            }
+            .onTapGesture {
+                onTap()
+            }
         }
-        .frame(width: 78, height: 26)
+        .frame(width: 104, height: 30)
+    }
+}
+
+/// 1-hour reply dot/heat scatter plot (matching claude-usage-monitor SpeedChart).
+/// Tap anywhere to toggle back to the compact sparkline.
+struct SpeedDotChartView: View {
+    let samples: [OutputSpeedSample]
+    let now: Date
+    let hoveredSampleId: Int?
+    let onHoverSample: (Int?) -> Void
+    let onTap: () -> Void
+
+    var body: some View {
+        let minSpeed = max(0, (samples.map(\.tokensPerSec).min() ?? 0) * 0.8)
+        let maxSpeed = max(minSpeed + 10, (samples.map(\.tokensPerSec).max() ?? 60) * 1.1)
+        let maxOut = max(1, samples.map(\.outputTokens).max() ?? 1)
+
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let span: TimeInterval = 3600
+
+            ZStack {
+                // Subtle horizontal baseline guides
+                VStack {
+                    Hairline().opacity(0.45)
+                    Spacer()
+                    Hairline().opacity(0.45)
+                    Spacer()
+                    Hairline().opacity(0.45)
+                }
+
+                ForEach(samples) { sample in
+                    let age = max(0, min(span, now.timeIntervalSince(sample.timestamp)))
+                    let x = w * CGFloat(1.0 - age / span)
+                    let normY = (sample.tokensPerSec - minSpeed) / (maxSpeed - minSpeed)
+                    let y = h - CGFloat(normY) * (h - 14) - 7
+                    let sizeRatio = sqrt(Double(sample.outputTokens) / Double(maxOut))
+                    let baseSize = CGFloat(4.5 + sizeRatio * 5.0)
+                    let isHovered = hoveredSampleId == sample.id
+                    let isLatest = sample.id == samples.last?.id
+
+                    Circle()
+                        .fill(
+                            isHovered || isLatest
+                                ? Palette.accent
+                                : Color.white.opacity(0.25 + 0.45 * (1.0 - age / span))
+                        )
+                        .frame(width: isHovered ? baseSize + 3 : baseSize, height: isHovered ? baseSize + 3 : baseSize)
+                        .shadow(color: (isHovered || isLatest) ? Palette.accent.opacity(0.55) : .clear, radius: 4)
+                        .position(x: max(6, min(w - 6, x)), y: y)
+                }
+            }
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let loc):
+                    var bestId: Int?
+                    var bestDist: CGFloat = 24
+                    for sample in samples {
+                        let age = max(0, min(span, now.timeIntervalSince(sample.timestamp)))
+                        let sx = max(6, min(w - 6, w * CGFloat(1.0 - age / span)))
+                        let normY = (sample.tokensPerSec - minSpeed) / (maxSpeed - minSpeed)
+                        let sy = h - CGFloat(normY) * (h - 14) - 7
+                        let d = hypot(loc.x - sx, loc.y - sy)
+                        if d < bestDist {
+                            bestDist = d
+                            bestId = sample.id
+                        }
+                    }
+                    onHoverSample(bestId)
+                case .ended:
+                    onHoverSample(nil)
+                }
+            }
+            .onTapGesture {
+                onTap()
+            }
+        }
+        .frame(height: 62)
+        .padding(.horizontal, 4)
+        .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 }
 

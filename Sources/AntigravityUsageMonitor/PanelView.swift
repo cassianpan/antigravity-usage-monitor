@@ -345,61 +345,158 @@ struct PanelView: View {
 
             if !preferences.contextCollapsed {
                 if let tokPerSec = speed.displayTokPerSec {
-                    HStack(alignment: .center) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(alignment: .lastTextBaseline, spacing: 3) {
-                                Text("~\(Int(round(tokPerSec)))")
-                                    .font(.system(size: 24, weight: .semibold, design: .monospaced))
-                                    .foregroundStyle(Palette.text)
-                                Text("tok/s")
-                                    .font(.system(size: 11.5, weight: .regular))
-                                    .foregroundStyle(Palette.secondary)
-                            }
-                            let windowLabel = speed.recent5mTokPerSec != nil
-                                ? (l10n.zh ? "近 5 分钟" : "Last 5 min")
-                                : (l10n.zh ? "近 1 小时" : "Last 1 hr")
-                            let modelSuffix = speed.latestModelName.map { " · \($0)" } ?? ""
-                            Text(windowLabel + modelSuffix)
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(Palette.tertiary)
-                                .lineLimit(1)
-                        }
-                        Spacer()
-                        if speed.sparkline.count >= 2 {
-                            SparklineView(values: speed.sparkline)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .panelTip("speed.approx", center: tipCenter, alignment: .center) {
-                        var rows: [Tip.Row] = []
-                        if let s5 = speed.recent5mTokPerSec {
-                            rows.append(Tip.Row(l10n.zh ? "近 5 分钟均值" : "Last 5 min avg", "~\(Int(round(s5))) tok/s"))
-                        }
-                        if let s1 = speed.recent1hTokPerSec {
-                            rows.append(Tip.Row(l10n.zh ? "近 1 小时均值" : "Last 1 hr avg", "~\(Int(round(s1))) tok/s"))
-                        }
-                        return Tip(
-                            title: l10n.zh ? "近似输出速度" : "Approximate output speed",
-                            rows: rows,
-                            note: l10n.zh
-                                ? "基于本地 transcript.jsonl 响应时间间隔估算（含思考/工具间隔），仅供参考。"
-                                : "Estimated from local transcript.jsonl intervals (includes thinking/tool time); approximate only."
-                        )
-                    }
+                    let recentSpark = Array(speed.samples.suffix(18))
+                    let hoveredSparkSample: OutputSpeedSample? = {
+                        guard let idx = interaction.hoveredSparkSampleIndex, idx >= 0, idx < recentSpark.count else { return nil }
+                        return recentSpark[idx]
+                    }()
+                    let hoveredDotSample: OutputSpeedSample? = {
+                        guard let id = interaction.hoveredDotSampleId else { return nil }
+                        return speed.samples.first(where: { $0.id == id })
+                    }()
+                    let timeFmt: DateFormatter = {
+                        let f = DateFormatter()
+                        f.dateFormat = "HH:mm"
+                        return f
+                    }()
 
-                    if hasActiveCtx, let ctx, preferences.contextSectionDensity == .detailed {
-                        HStack {
-                            Text(l10n.zh ? "活跃上下文" : "Context")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(Palette.tertiary)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .center) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(alignment: .lastTextBaseline, spacing: 3) {
+                                    Text("~\(Int(round(tokPerSec)))")
+                                        .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(Palette.text)
+                                    Text("tok/s")
+                                        .font(.system(size: 11.5, weight: .regular))
+                                        .foregroundStyle(Palette.secondary)
+                                }
+
+                                if let hs = hoveredSparkSample {
+                                    Text("\(timeFmt.string(from: hs.timestamp)) · ~\(Int(round(hs.tokensPerSec))) tok/s · \(UsageFormatter.compactTokens(hs.outputTokens))")
+                                        .font(.system(size: 10.5, design: .monospaced))
+                                        .foregroundStyle(Palette.secondary)
+                                        .lineLimit(1)
+                                } else {
+                                    let windowLabel = speed.recent5mTokPerSec != nil
+                                        ? (l10n.zh ? "近 5 分钟" : "Last 5 min")
+                                        : (l10n.zh ? "近 1 小时" : "Last 1 hr")
+                                    let modelSuffix = speed.latestModelName.map { " · \($0)" } ?? ""
+                                    Text(windowLabel + modelSuffix)
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(Palette.tertiary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .panelTip("speed.approx", center: tipCenter, alignment: .leading) {
+                                var rows: [Tip.Row] = []
+                                if let s5 = speed.recent5mTokPerSec {
+                                    rows.append(Tip.Row(l10n.zh ? "近 5 分钟均值" : "Last 5 min avg", "~\(Int(round(s5))) tok/s"))
+                                }
+                                if let s1 = speed.recent1hTokPerSec {
+                                    rows.append(Tip.Row(l10n.zh ? "近 1 小时均值" : "Last 1 hr avg", "~\(Int(round(s1))) tok/s · \(speed.recent1hReplyCount)"))
+                                }
+                                return Tip(
+                                    title: l10n.zh ? "近似输出速度" : "Approximate output speed",
+                                    rows: rows,
+                                    note: l10n.zh
+                                        ? "点击右侧图表可在「折线图」与「1 小时回复热点图」间切换。"
+                                        : "Click the chart to toggle between sparkline and 1-hour reply dot plot."
+                                )
+                            }
+
                             Spacer()
-                            if let size = ctx.contextWindowSize, size > 0 {
-                                Text("\(String(format: "%.1f%%", usedPct)) · \(UsageFormatter.compactTokens(usedTokens)) / \(UsageFormatter.compactTokens(size))")
-                                    .font(.system(size: 10.5, design: .monospaced))
-                                    .foregroundStyle(Palette.secondary)
+
+                            if interaction.showSpeedDotChart {
+                                // Detailed mode header right: 1-hour summary (tap to switch back)
+                                Button {
+                                    withAnimation(.easeOut(duration: 0.18)) {
+                                        interaction.showSpeedDotChart = false
+                                        interaction.hoveredDotSampleId = nil
+                                    }
+                                } label: {
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        if let s1 = speed.recent1hTokPerSec {
+                                            Text("~\(Int(round(s1))) tok/s")
+                                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                                .foregroundStyle(Palette.secondary)
+                                        }
+                                        Text(l10n.zh ? "近 1 小时 · \(speed.recent1hReplyCount) 次" : "Last 1h · \(speed.recent1hReplyCount)")
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(Palette.tertiary)
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            } else if speed.samples.count >= 2 {
+                                SparklineView(
+                                    samples: speed.samples,
+                                    hoveredIndex: interaction.hoveredSparkSampleIndex,
+                                    onHoverIndex: { interaction.hoveredSparkSampleIndex = $0 },
+                                    onTap: {
+                                        withAnimation(.easeOut(duration: 0.18)) {
+                                            interaction.hoveredSparkSampleIndex = nil
+                                            interaction.showSpeedDotChart = true
+                                        }
+                                    }
+                                )
                             }
                         }
-                        .padding(.top, 2)
+
+                        if interaction.showSpeedDotChart && !speed.samples.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                SpeedDotChartView(
+                                    samples: speed.samples,
+                                    now: store.localReport.updatedAt,
+                                    hoveredSampleId: interaction.hoveredDotSampleId,
+                                    onHoverSample: { interaction.hoveredDotSampleId = $0 },
+                                    onTap: {
+                                        withAnimation(.easeOut(duration: 0.18)) {
+                                            interaction.hoveredDotSampleId = nil
+                                            interaction.showSpeedDotChart = false
+                                        }
+                                    }
+                                )
+
+                                HStack {
+                                    if let dot = hoveredDotSample {
+                                        Text("\(timeFmt.string(from: dot.timestamp)) · ~\(Int(round(dot.tokensPerSec))) tok/s · \(UsageFormatter.compactTokens(dot.outputTokens)) tokens · \(dot.modelDisplayName)")
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundStyle(Palette.secondary)
+                                            .lineLimit(1)
+                                    } else {
+                                        Text(l10n.zh ? "1 小时前" : "1h ago")
+                                            .font(.system(size: 9.5))
+                                            .foregroundStyle(Palette.tertiary)
+                                        Spacer()
+                                        Text(l10n.zh ? "点击图表切换折线" : "Click to toggle sparkline")
+                                            .font(.system(size: 9.5))
+                                            .foregroundStyle(Palette.quaternary)
+                                        Spacer()
+                                        Text(l10n.zh ? "现在" : "Now")
+                                            .font(.system(size: 9.5))
+                                            .foregroundStyle(Palette.tertiary)
+                                    }
+                                }
+                            }
+                            .transition(.opacity)
+                        }
+
+                        if hasActiveCtx, let ctx, preferences.contextSectionDensity == .detailed {
+                            HStack {
+                                Text(l10n.zh ? "活跃上下文" : "Context")
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(Palette.tertiary)
+                                Spacer()
+                                if let size = ctx.contextWindowSize, size > 0 {
+                                    Text("\(String(format: "%.1f%%", usedPct)) · \(UsageFormatter.compactTokens(usedTokens)) / \(UsageFormatter.compactTokens(size))")
+                                        .font(.system(size: 10.5, design: .monospaced))
+                                        .foregroundStyle(Palette.secondary)
+                                }
+                            }
+                            .padding(.top, 1)
+                        }
                     }
                 } else {
                     QuietNoticeRow(
