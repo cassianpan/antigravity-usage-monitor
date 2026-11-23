@@ -84,33 +84,51 @@ Built with pure Swift 6 + SwiftUI + AppKit for macOS 15+ (Apple Silicon). Zero t
 
 ## Install
 
-### Option 1: GitHub Releases (`.dmg` or `.zip`)
-
-Download the latest `AntigravityUsageMonitor-*-macOS-arm64.dmg` (or `.zip`) from [GitHub Releases](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest), drag **`Antigravity Usage Monitor.app`** into `/Applications`, and launch.
-
-> **First-launch note (self-signed open-source build):** This app is ad-hoc signed rather than notarized with a paid Apple Developer certificate. If macOS Gatekeeper blocks the first launch, run once:
->
-> ```bash
-> xattr -dr com.apple.quarantine "/Applications/Antigravity Usage Monitor.app"
-> ```
-
-### Option 2: Homebrew Cask
+### Option 1: Homebrew Cask (Recommended — No Gatekeeper Prompt)
 
 ```bash
-brew tap panmingxuan/antigravity-usage-monitor https://github.com/panmingxuan/antigravity-usage-monitor
+brew tap cassianpan/antigravity-usage-monitor https://github.com/cassianpan/antigravity-usage-monitor
 brew install --cask antigravity-usage-monitor
 ```
+
+The Cask automatically clears the macOS quarantine attribute during installation, so you can launch the app right away without a Gatekeeper warning.
+
+### Option 2: GitHub Releases (`.dmg` or `.zip`)
+
+Download the latest `AntigravityUsageMonitor-*-macOS-arm64.dmg` (or `.zip`) from [GitHub Releases](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest), drag **`Antigravity Usage Monitor.app`** into `/Applications`, and launch.
 
 ### Option 3: Build from Source
 
 Requires macOS 15+ and Swift 6 (Xcode 16+ or Apple Command Line Tools):
 
 ```bash
-git clone https://github.com/panmingxuan/antigravity-usage-monitor.git
+git clone https://github.com/cassianpan/antigravity-usage-monitor.git
 cd antigravity-usage-monitor
 make test
 make app
 make dmg # optional: generates dist/AntigravityUsageMonitor-*-macOS-arm64.dmg
+```
+
+### Code Signing & First-Launch Gatekeeper Note
+
+Release builds are **ad-hoc self-signed** (`codesign --force --deep --sign -`) rather than notarized with a paid Apple Developer ID. If you download `.dmg` or `.zip` via a browser, macOS Gatekeeper may block the first launch with *"Apple could not verify..."*.
+
+You can allow it in either way:
+
+1. **System Settings (GUI):** Click **Done** on the warning dialog, open **System Settings › Privacy & Security**, scroll to the bottom, and click **Open Anyway**.
+2. **Terminal (one-liner):**
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/Antigravity Usage Monitor.app"
+   ```
+
+If you want to re-sign the app locally (e.g., ad-hoc or with your own local Keychain certificate):
+
+```bash
+# Ad-hoc self-sign
+codesign --force --deep --sign - "/Applications/Antigravity Usage Monitor.app"
+
+# Or sign with your own Keychain certificate
+codesign --force --deep --sign "<Your Certificate Name>" "/Applications/Antigravity Usage Monitor.app"
 ```
 
 ## Privacy & Data Sources

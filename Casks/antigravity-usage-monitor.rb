@@ -12,8 +12,14 @@ cask "antigravity-usage-monitor" do
 
   app "Antigravity Usage Monitor.app"
 
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Antigravity Usage Monitor.app"],
+                   sudo: false
+  end
+
   caveats <<~EOS
-    Because this app is self-signed (not notarized by Apple), if macOS blocks the first launch, run:
-      xattr -dr com.apple.quarantine "/Applications/Antigravity Usage Monitor.app"
+    This app is ad-hoc self-signed (not notarized by Apple).
+    Homebrew automatically cleared the quarantine attribute during installation so you can open it directly.
   EOS
 end

@@ -84,33 +84,51 @@
 
 ## 安装方式
 
-### 方式一：GitHub Releases（`.dmg` 或 `.zip`）
-
-前往 [GitHub Releases](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest) 下载最新的 `AntigravityUsageMonitor-*-macOS-arm64.dmg`（或 `.zip`），将 **`Antigravity Usage Monitor.app`** 拖入 `/Applications` 即可使用。
-
-> **首次打开提示（开源自签名版）：** 本项目为开源自签名打包，未经过 Apple 付费开发者公证。若 macOS 提示“无法验证开发者”或“已损坏”，执行一次以下命令放行即可：
->
-> ```bash
-> xattr -dr com.apple.quarantine "/Applications/Antigravity Usage Monitor.app"
-> ```
-
-### 方式二：Homebrew Cask
+### 方式一：Homebrew Cask（推荐，装完直接打开免弹窗）
 
 ```bash
-brew tap panmingxuan/antigravity-usage-monitor https://github.com/panmingxuan/antigravity-usage-monitor
+brew tap cassianpan/antigravity-usage-monitor https://github.com/cassianpan/antigravity-usage-monitor
 brew install --cask antigravity-usage-monitor
 ```
+
+安装脚本会自动清除 macOS 的 `com.apple.quarantine` 隔离标记，安装完成后可直接打开使用，无需手动放行。
+
+### 方式二：GitHub Releases（`.dmg` 或 `.zip`）
+
+前往 [GitHub Releases](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest) 下载最新的 `AntigravityUsageMonitor-*-macOS-arm64.dmg`（或 `.zip`），将 **`Antigravity Usage Monitor.app`** 拖入 `/Applications` 即可使用。
 
 ### 方式三：从源码构建
 
 需要 macOS 15+ 及 Swift 6（Xcode 16+ 或 Apple Command Line Tools）：
 
 ```bash
-git clone https://github.com/panmingxuan/antigravity-usage-monitor.git
+git clone https://github.com/cassianpan/antigravity-usage-monitor.git
 cd antigravity-usage-monitor
 make test
 make app
 make dmg # 可选：在 dist/ 目录生成 .dmg 安装镜像
+```
+
+### 自签说明与首次打开放行
+
+本项目为开源 **ad-hoc 自签名**打包（`codesign --force --deep --sign -`），未经过付费 Apple Developer ID 公证。因此通过浏览器下载 `.dmg` / `.zip` 首次打开时，macOS Gatekeeper 可能会弹出“Apple 无法验证……”。
+
+任选以下一种方式放行即可：
+
+1. **系统设置放行（图形界面）**：在弹窗中点击「完成」→ 打开「系统设置 › 隐私与安全性」→ 滑到底部点击「仍要打开」。
+2. **终端一行命令放行**：
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/Antigravity Usage Monitor.app"
+   ```
+
+如需在本地重新自签（或使用你自己钥匙串里的代码签名证书重签）：
+
+```bash
+# 本地 ad-hoc 自签
+codesign --force --deep --sign - "/Applications/Antigravity Usage Monitor.app"
+
+# 或使用本机钥匙串中的自建/个人证书签名
+codesign --force --deep --sign "<你的证书名称>" "/Applications/Antigravity Usage Monitor.app"
 ```
 
 ## 隐私与数据来源说明
