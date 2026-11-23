@@ -105,10 +105,17 @@ final class TipCenter {
     }
 }
 
+enum TipHorizontalAlignment {
+    case leading
+    case center
+    case trailing
+}
+
 struct TipPlacement {
     let id: String
     let tip: Tip
     let anchor: Anchor<CGRect>
+    let alignment: TipHorizontalAlignment
 }
 
 struct TipAnchorKey: PreferenceKey {
@@ -123,6 +130,7 @@ struct TipAnchorKey: PreferenceKey {
 private struct TipTargetModifier: ViewModifier {
     let id: String
     let center: TipCenter
+    let alignment: TipHorizontalAlignment
     let make: () -> Tip?
 
     func body(content: Content) -> some View {
@@ -137,14 +145,19 @@ private struct TipTargetModifier: ViewModifier {
             }
             .anchorPreference(key: TipAnchorKey.self, value: .bounds) { anchor in
                 guard isShown, let tip = make(), !tip.isEmpty else { return nil }
-                return TipPlacement(id: id, tip: tip, anchor: anchor)
+                return TipPlacement(id: id, tip: tip, anchor: anchor, alignment: alignment)
             }
     }
 }
 
 extension View {
-    func panelTip(_ id: String, center: TipCenter, _ make: @escaping () -> Tip?) -> some View {
-        modifier(TipTargetModifier(id: id, center: center, make: make))
+    func panelTip(
+        _ id: String,
+        center: TipCenter,
+        alignment: TipHorizontalAlignment = .center,
+        _ make: @escaping () -> Tip?
+    ) -> some View {
+        modifier(TipTargetModifier(id: id, center: center, alignment: alignment, make: make))
     }
 
     func panelTipOverlay(center: TipCenter) -> some View {
@@ -152,7 +165,7 @@ extension View {
             GeometryReader { proxy in
                 if let placement {
                     let targetRect = proxy[placement.anchor]
-                    TipBubbleLayout(target: targetRect) {
+                    TipBubbleLayout(target: targetRect, alignment: placement.alignment) {
                         TipBubble(tip: placement.tip)
                             .allowsHitTesting(false)
                             .transition(.opacity.combined(with: .scale(scale: 0.96)))
@@ -167,6 +180,7 @@ extension View {
 
 private struct TipBubbleLayout: Layout {
     let target: CGRect
+    let alignment: TipHorizontalAlignment
     private static let gap: CGFloat = 7
     private static let margin: CGFloat = 10
 
@@ -185,13 +199,20 @@ private struct TipBubbleLayout: Layout {
         let height = size.height
 
         // Prefer placing above target; flip below if insufficient space.
-        let aboveY = target.minY - Self.gap - height
+        let aboveY = bounds.minY + target.minY - Self.gap - height
         let y = aboveY >= bounds.minY + Self.margin
             ? aboveY
-            : min(bounds.maxY - Self.margin - height, target.maxY + Self.gap)
+            : min(bounds.maxY - Self.margin - height, bounds.minY + target.maxY + Self.gap)
 
-        // Align centered with target, clamped inside panel horizontal margins.
-        let idealX = target.midX - width / 2.0
+        let idealX: CGFloat
+        switch alignment {
+        case .leading:
+            idealX = bounds.minX + target.minX
+        case .center:
+            idealX = bounds.minX + target.midX - width / 2.0
+        case .trailing:
+            idealX = bounds.minX + target.maxX - width
+        }
         let x = max(bounds.minX + Self.margin, min(bounds.maxX - Self.margin - width, idealX))
 
         bubble.place(
@@ -306,6 +327,7 @@ struct FooterActionButton: View {
     let systemImage: String
     let title: String
     let shortcut: String
+    var tipAlignment: TipHorizontalAlignment = .center
     var rotation: Double = 0
     let interaction: PanelInteractionState
     let tipCenter: TipCenter
@@ -341,7 +363,7 @@ struct FooterActionButton: View {
                 }
             }
         }
-        .panelTip("footer.\(id)", center: tipCenter) {
+        .panelTip("footer.\(id)", center: tipCenter, alignment: tipAlignment) {
             Tip(rows: [Tip.Row(isChinese ? "快捷键" : "Shortcut", shortcut)])
         }
     }

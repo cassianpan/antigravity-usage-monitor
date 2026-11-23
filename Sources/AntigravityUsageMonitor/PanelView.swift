@@ -544,43 +544,44 @@ struct PanelView: View {
     // MARK: - Footer (1:1 ported FooterActionButton + shortcut tips + spin animation)
 
     private func footerBar(l10n: L10n) -> some View {
-        HStack {
-            FooterActionButton(
-                id: "settings",
-                systemImage: "slider.horizontal.3",
-                title: l10n.settings,
-                shortcut: "⌘,",
-                interaction: interaction,
-                tipCenter: tipCenter,
-                isChinese: l10n.zh,
-                action: onOpenSettings
-            )
-
-            Spacer()
+        ZStack {
+            HStack {
+                FooterActionButton(
+                    id: "settings",
+                    systemImage: "slider.horizontal.3",
+                    title: l10n.settings,
+                    shortcut: "⌘,",
+                    tipAlignment: .leading,
+                    interaction: interaction,
+                    tipCenter: tipCenter,
+                    isChinese: l10n.zh,
+                    action: onOpenSettings
+                )
+                Spacer()
+                FooterActionButton(
+                    id: "quit",
+                    systemImage: "power",
+                    title: l10n.quit,
+                    shortcut: "⌘Q",
+                    tipAlignment: .trailing,
+                    interaction: interaction,
+                    tipCenter: tipCenter,
+                    isChinese: l10n.zh,
+                    action: onQuit
+                )
+            }
 
             FooterActionButton(
                 id: "refresh",
                 systemImage: "arrow.clockwise",
                 title: l10n.refresh,
                 shortcut: "⌘R",
+                tipAlignment: .center,
                 rotation: interaction.refreshSpinDegrees,
                 interaction: interaction,
                 tipCenter: tipCenter,
                 isChinese: l10n.zh,
                 action: onRefresh
-            )
-
-            Spacer()
-
-            FooterActionButton(
-                id: "quit",
-                systemImage: "power",
-                title: l10n.quit,
-                shortcut: "⌘Q",
-                interaction: interaction,
-                tipCenter: tipCenter,
-                isChinese: l10n.zh,
-                action: onQuit
             )
         }
         .padding(.horizontal, 10)
