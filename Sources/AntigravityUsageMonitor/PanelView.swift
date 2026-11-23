@@ -26,7 +26,7 @@ struct PanelView: View {
                     panelDivider
                 }
 
-                if preferences.contextSectionDensity != .hidden {
+                if preferences.showEstimatedOutputSpeed && preferences.contextSectionDensity != .hidden {
                     contextSection(l10n: l10n)
                     panelDivider
                 }

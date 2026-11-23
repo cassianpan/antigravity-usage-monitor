@@ -232,7 +232,27 @@ struct SettingsView: View {
             Hairline()
             densityRow(title: l10n.limits, selection: $preferences.quotaSectionDensity, zh: zh)
             Hairline()
-            densityRow(title: zh ? "输出速度" : "Output speed", selection: $preferences.contextSectionDensity, zh: zh)
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(zh ? "近似输出速度（估算）" : "Estimated output speed")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Palette.text)
+                    Text(zh ? "基于本地日志间隔近似估算，非真实生成速度，可随时关闭" : "Approximated from local transcript intervals, not real token timing")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Palette.tertiary)
+                }
+                Spacer()
+                Toggle("", isOn: $preferences.showEstimatedOutputSpeed)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(Palette.accent)
+            }
+
+            if preferences.showEstimatedOutputSpeed {
+                densityRow(title: zh ? "输出速度密度" : "Speed section density", selection: $preferences.contextSectionDensity, zh: zh)
+            }
+
             Hairline()
             densityRow(title: l10n.spend, selection: $preferences.spendSectionDensity, zh: zh)
         }

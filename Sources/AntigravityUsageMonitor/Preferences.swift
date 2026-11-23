@@ -78,6 +78,9 @@ final class AppPreferences {
     var contextSectionDensity: SectionDensity {
         didSet { defaults.set(contextSectionDensity.rawValue, forKey: Keys.contextDensity) }
     }
+    var showEstimatedOutputSpeed: Bool {
+        didSet { defaults.set(showEstimatedOutputSpeed, forKey: Keys.showEstimatedOutputSpeed) }
+    }
     var spendSectionDensity: SectionDensity {
         didSet { defaults.set(spendSectionDensity.rawValue, forKey: Keys.spendDensity) }
     }
@@ -163,6 +166,7 @@ final class AppPreferences {
         static let processesDensity = "panel.processesDensity"
         static let quotaDensity = "panel.quotaDensity"
         static let contextDensity = "panel.contextDensity"
+        static let showEstimatedOutputSpeed = "panel.showEstimatedOutputSpeed"
         static let spendDensity = "panel.spendDensity"
         static let refreshInterval = "refresh.intervalSeconds"
         static let billingDay = "subscription.billingDay"
@@ -184,6 +188,7 @@ final class AppPreferences {
             Keys.processesDensity: SectionDensity.simple.rawValue,
             Keys.quotaDensity: SectionDensity.detailed.rawValue,
             Keys.contextDensity: SectionDensity.detailed.rawValue,
+            Keys.showEstimatedOutputSpeed: true,
             Keys.spendDensity: SectionDensity.detailed.rawValue,
             Keys.refreshInterval: 30,
             Keys.billingDay: 0,
@@ -214,6 +219,7 @@ final class AppPreferences {
         self.processesSectionDensity = SectionDensity(rawValue: defaults.string(forKey: Keys.processesDensity) ?? "") ?? .simple
         self.quotaSectionDensity = SectionDensity(rawValue: defaults.string(forKey: Keys.quotaDensity) ?? "") ?? .detailed
         self.contextSectionDensity = SectionDensity(rawValue: defaults.string(forKey: Keys.contextDensity) ?? "") ?? .detailed
+        self.showEstimatedOutputSpeed = defaults.bool(forKey: Keys.showEstimatedOutputSpeed)
         self.spendSectionDensity = SectionDensity(rawValue: defaults.string(forKey: Keys.spendDensity) ?? "") ?? .detailed
         self.refreshIntervalSeconds = max(10, defaults.integer(forKey: Keys.refreshInterval))
         self.billingDay = max(0, min(31, defaults.integer(forKey: Keys.billingDay)))
