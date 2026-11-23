@@ -177,8 +177,11 @@ private struct TipBubbleLayout: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         guard let bubble = subviews.first else { return }
         let maxW = max(120, bounds.width - Self.margin * 2)
-        let size = bubble.sizeThatFits(ProposedViewSize(width: maxW, height: nil))
-        let width = min(size.width, maxW)
+        let idealSize = bubble.sizeThatFits(.unspecified)
+        let width = min(idealSize.width, maxW)
+        let size = idealSize.width > maxW
+            ? bubble.sizeThatFits(ProposedViewSize(width: maxW, height: nil))
+            : idealSize
         let height = size.height
 
         // Prefer placing above target; flip below if insufficient space.
