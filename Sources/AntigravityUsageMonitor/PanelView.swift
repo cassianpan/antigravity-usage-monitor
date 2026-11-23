@@ -305,33 +305,38 @@ struct PanelView: View {
         return Tip(title: bucket.displayName, rows: rows)
     }
 
-    // MARK: - Active Context Window Section
+    // MARK: - Output Speed & Active Context Section
 
     private func contextSection(l10n: L10n) -> some View {
+        let speed = store.localReport.outputSpeed
         let ctx = store.officialReport.contextWindow
         let usedPct = max(0, min(100, ctx?.usedPercentage ?? 0))
         let usedTokens = (ctx?.totalInputTokens ?? 0) + (ctx?.totalOutputTokens ?? 0)
-        let hasActiveUsage = ctx != nil && (usedTokens > 0 || usedPct > 0)
+        let hasActiveCtx = ctx != nil && (usedTokens > 0 || usedPct > 0)
 
         return VStack(alignment: .leading, spacing: 7) {
             Button {
                 preferences.contextCollapsed.toggle()
             } label: {
                 HStack {
-                    Text(l10n.context)
+                    Text(l10n.zh ? "输出速度" : "Output speed")
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(Palette.secondary)
                     Spacer()
-                    if let modelName = store.officialReport.activeModelName, hasActiveUsage {
+                    if speed.isRecentlyActive, let age = speed.lastResponseAgeSeconds {
                         HStack(spacing: 5) {
                             Circle()
                                 .fill(Palette.live)
                                 .frame(width: 5, height: 5)
-                            Text(modelName)
+                            Text(l10n.zh ? "生成活跃 · \(Int(age))s 前" : "Active · \(Int(age))s ago")
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(Palette.secondary)
-                                .lineLimit(1)
                         }
+                    } else if let modelName = store.officialReport.activeModelName, hasActiveCtx {
+                        Text(modelName)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Palette.tertiary)
+                            .lineLimit(1)
                     }
                 }
                 .contentShape(Rectangle())
@@ -339,37 +344,70 @@ struct PanelView: View {
             .buttonStyle(.plain)
 
             if !preferences.contextCollapsed {
-                if hasActiveUsage, let ctx {
-                    let usedFrac = usedPct / 100.0
-                    HStack(alignment: .lastTextBaseline) {
-                        HStack(alignment: .lastTextBaseline, spacing: 3) {
-                            Text(String(format: "%.1f", usedPct))
-                                .font(.system(size: 22, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(Palette.text)
-                            Text("%")
-                                .font(.system(size: 11.5, weight: .medium))
-                                .foregroundStyle(Palette.secondary)
+                if let tokPerSec = speed.displayTokPerSec {
+                    HStack(alignment: .center) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(alignment: .lastTextBaseline, spacing: 3) {
+                                Text("~\(Int(round(tokPerSec)))")
+                                    .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(Palette.text)
+                                Text("tok/s")
+                                    .font(.system(size: 11.5, weight: .regular))
+                                    .foregroundStyle(Palette.secondary)
+                            }
+                            let windowLabel = speed.recent5mTokPerSec != nil
+                                ? (l10n.zh ? "近 5 分钟" : "Last 5 min")
+                                : (l10n.zh ? "近 1 小时" : "Last 1 hr")
+                            let modelSuffix = speed.latestModelName.map { " · \($0)" } ?? ""
+                            Text(windowLabel + modelSuffix)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(Palette.tertiary)
+                                .lineLimit(1)
                         }
                         Spacer()
-                        if let size = ctx.contextWindowSize, size > 0 {
-                            Text("\(UsageFormatter.compactTokens(usedTokens)) / \(UsageFormatter.compactTokens(size))")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(Palette.tertiary)
+                        if speed.sparkline.count >= 2 {
+                            SparklineView(values: speed.sparkline)
                         }
                     }
-
-                    if preferences.contextSectionDensity == .detailed {
-                        ThinBar(
-                            fraction: usedFrac,
-                            color: Palette.levelColor(for: usedFrac),
-                            height: 4
+                    .contentShape(Rectangle())
+                    .panelTip("speed.approx", center: tipCenter, alignment: .center) {
+                        var rows: [Tip.Row] = []
+                        if let s5 = speed.recent5mTokPerSec {
+                            rows.append(Tip.Row(l10n.zh ? "近 5 分钟均值" : "Last 5 min avg", "~\(Int(round(s5))) tok/s"))
+                        }
+                        if let s1 = speed.recent1hTokPerSec {
+                            rows.append(Tip.Row(l10n.zh ? "近 1 小时均值" : "Last 1 hr avg", "~\(Int(round(s1))) tok/s"))
+                        }
+                        return Tip(
+                            title: l10n.zh ? "近似输出速度" : "Approximate output speed",
+                            rows: rows,
+                            note: l10n.zh
+                                ? "基于本地 transcript.jsonl 响应时间间隔估算（含思考/工具间隔），仅供参考。"
+                                : "Estimated from local transcript.jsonl intervals (includes thinking/tool time); approximate only."
                         )
+                    }
+
+                    if hasActiveCtx, let ctx, preferences.contextSectionDensity == .detailed {
+                        HStack {
+                            Text(l10n.zh ? "活跃上下文" : "Context")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(Palette.tertiary)
+                            Spacer()
+                            if let size = ctx.contextWindowSize, size > 0 {
+                                Text("\(String(format: "%.1f%%", usedPct)) · \(UsageFormatter.compactTokens(usedTokens)) / \(UsageFormatter.compactTokens(size))")
+                                    .font(.system(size: 10.5, design: .monospaced))
+                                    .foregroundStyle(Palette.secondary)
+                            }
+                        }
+                        .padding(.top, 2)
                     }
                 } else {
                     QuietNoticeRow(
                         systemImage: "waveform.path.ecg",
-                        title: l10n.contextIdleTitle,
-                        subtitle: l10n.contextIdleSubtitle
+                        title: l10n.zh ? "最近 1 小时没有回复" : "No replies in the last hour",
+                        subtitle: l10n.zh
+                            ? "Antigravity 写完回复后，这里显示估算的每秒输出 token"
+                            : "Approximate tokens per second appear here after a reply"
                     )
                 }
             }
@@ -485,20 +523,59 @@ struct PanelView: View {
                 .padding(2)
                 .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-                // Big cost + 14-day mini bars side by side
+                // Projected full-quota spend & tokens (matching claude-usage-monitor)
+                let projection: (costUSD: Double, tokens: Int)? = {
+                    guard preferences.selectedSpendTab != .today,
+                          let weekly = store.officialReport.primaryWeekly,
+                          !weekly.isResetElapsed,
+                          weekly.usedFraction >= 0.01,
+                          store.localReport.week.estimatedCostUSD > 0 else {
+                        return nil
+                    }
+                    let fullWeekCost = store.localReport.week.estimatedCostUSD / weekly.usedFraction
+                    let fullWeekTokens = Double(store.localReport.week.totalTokens) / weekly.usedFraction
+                    if preferences.selectedSpendTab == .month {
+                        let weeksInMonth = Double(store.localReport.monthPeriod?.totalDays ?? 30) / 7.0
+                        return (fullWeekCost * weeksInMonth, Int(fullWeekTokens * weeksInMonth))
+                    }
+                    return (fullWeekCost, Int(fullWeekTokens))
+                }()
+
+                // Big cost + projected total + 14-day mini bars side by side
                 HStack(alignment: .bottom) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(UsageFormatter.currency(summary.estimatedCostUSD))
-                            .font(.system(size: 25, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(Palette.text)
-                            .panelTip("spend.cost", center: tipCenter, alignment: .leading) {
-                                Tip(
-                                    title: l10n.zh ? "API 等价花费估算" : "API-equivalent spend estimate",
-                                    note: l10n.zh
-                                        ? "按各模型公开 API 单价折算本机历史会话消耗，并非订阅实际扣费。"
-                                        : "Estimated from published API list prices for local sessions, not your subscription bill."
-                                )
+                        HStack(alignment: .lastTextBaseline, spacing: 6) {
+                            Text(UsageFormatter.currency(summary.estimatedCostUSD))
+                                .font(.system(size: 25, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(Palette.text)
+                                .panelTip("spend.cost", center: tipCenter, alignment: .leading) {
+                                    Tip(
+                                        title: l10n.zh ? "API 等价花费估算" : "API-equivalent spend estimate",
+                                        note: l10n.zh
+                                            ? "按各模型公开 API 单价折算本机历史会话消耗，并非订阅实际扣费。"
+                                            : "Estimated from published API list prices for local sessions, not your subscription bill."
+                                    )
+                                }
+
+                            if let proj = projection {
+                                let projCostStr = proj.costUSD >= 100 ? String(format: "$%.0f", proj.costUSD) : UsageFormatter.currency(proj.costUSD)
+                                Text(l10n.zh ? "预计 \(projCostStr)" : "→ \(projCostStr)")
+                                    .font(.system(size: 11.5, design: .monospaced))
+                                    .foregroundStyle(Palette.tertiary)
+                                    .panelTip("spend.projected", center: tipCenter, alignment: .leading) {
+                                        Tip(
+                                            title: l10n.zh ? "满额预计用量" : "Projected full-limit usage",
+                                            rows: [
+                                                Tip.Row(l10n.zh ? "预计满额花费" : "Projected spend", projCostStr),
+                                                Tip.Row(l10n.zh ? "预计满额 Tokens" : "Projected tokens", "~\(UsageFormatter.compactTokens(proj.tokens))"),
+                                            ],
+                                            note: l10n.zh
+                                                ? "按当前周限额已用比例推算用满 100% 时的大致总量，仅供体感参考。"
+                                                : "Extrapolated from current weekly limit percentage assuming 100% usage."
+                                        )
+                                    }
                             }
+                        }
 
                         if summary.hasUnpricedModels {
                             Text(l10n.unpricedBadge)
@@ -514,10 +591,18 @@ struct PanelView: View {
                             let dayLabel = l10n.zh
                                 ? "第 \(period.currentDay) / \(period.totalDays) 天"
                                 : "Day \(period.currentDay) of \(period.totalDays)"
-                            let savedPart = summary.cacheSavingsUSD > 0
-                                ? " · \(l10n.savedPrefix)\(UsageFormatter.currency(summary.cacheSavingsUSD))"
-                                : ""
-                            Text(dayLabel + savedPart)
+                            let extraPart: String = {
+                                if let proj = projection {
+                                    let left = max(0, proj.costUSD - summary.estimatedCostUSD)
+                                    let leftStr = left >= 100 ? String(format: "$%.0f", left) : UsageFormatter.currency(left)
+                                    return l10n.zh ? " · 预计还剩 \(leftStr)" : " · \(leftStr) left"
+                                }
+                                if summary.cacheSavingsUSD > 0 {
+                                    return " · \(l10n.savedPrefix)\(UsageFormatter.currency(summary.cacheSavingsUSD))"
+                                }
+                                return ""
+                            }()
+                            Text(dayLabel + extraPart)
                                 .font(.system(size: 10.5, design: .monospaced))
                                 .foregroundStyle(Palette.tertiary)
                         } else if summary.cacheSavingsUSD > 0 {

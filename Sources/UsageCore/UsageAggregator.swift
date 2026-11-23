@@ -51,6 +51,7 @@ public struct UsageAggregator: Sendable {
         let monthSummary = summarize(monthRecords)
         let byModel = summarizeByModel(weekRecords)
         let dailyTrend = buildDailyTrend(records: records, now: now, days: 14)
+        let outputSpeed = estimateOutputSpeed(records: records, now: now)
 
         return LocalUsageReport(
             today: todaySummary,
@@ -59,10 +60,64 @@ public struct UsageAggregator: Sendable {
             month: monthSummary,
             weekPeriod: weekPeriod,
             monthPeriod: monthPeriod,
+            outputSpeed: outputSpeed,
             byModel: byModel,
             dailyTrend: dailyTrend,
             conversationCount: conversationCount,
             updatedAt: now
+        )
+    }
+
+    private func estimateOutputSpeed(records: [TranscriptRecord], now: Date) -> OutputSpeedSnapshot {
+        let oneHourAgo = now.addingTimeInterval(-3600)
+        let fiveMinutesAgo = now.addingTimeInterval(-300)
+
+        let recent = records
+            .filter { $0.timestamp >= oneHourAgo && $0.timestamp <= now && $0.outputTokens > 0 }
+            .sorted { $0.timestamp < $1.timestamp }
+
+        guard let latest = recent.last else {
+            return OutputSpeedSnapshot()
+        }
+
+        let lastAge = max(0, now.timeIntervalSince(latest.timestamp))
+        let isActive = lastAge <= 60
+
+        // Compute per-turn approximate tok/s within each conversation, clamping outliers.
+        var samples: [(timestamp: Date, speed: Double)] = []
+        let byConv = Dictionary(grouping: recent, by: \.conversationId)
+        for (_, convRecords) in byConv {
+            let sorted = convRecords.sorted { $0.timestamp < $1.timestamp }
+            for i in 0..<sorted.count {
+                let rec = sorted[i]
+                let dt: TimeInterval
+                if i > 0 {
+                    dt = rec.timestamp.timeIntervalSince(sorted[i - 1].timestamp)
+                } else {
+                    // Single turn fallback: approximate typical latency window
+                    dt = max(3.0, Double(rec.outputTokens) / 45.0)
+                }
+                guard dt >= 2.0 && dt <= 90.0 else { continue }
+                let rawSpeed = Double(rec.outputTokens) / dt
+                let clamped = max(5.0, min(220.0, rawSpeed))
+                samples.append((rec.timestamp, clamped))
+            }
+        }
+
+        samples.sort { $0.timestamp < $1.timestamp }
+
+        let samples5m = samples.filter { $0.timestamp >= fiveMinutesAgo }
+        let avg5m: Double? = samples5m.isEmpty ? nil : (samples5m.map(\.speed).reduce(0, +) / Double(samples5m.count))
+        let avg1h: Double? = samples.isEmpty ? nil : (samples.map(\.speed).reduce(0, +) / Double(samples.count))
+        let sparkline = Array(samples.suffix(18).map(\.speed))
+
+        return OutputSpeedSnapshot(
+            recent5mTokPerSec: avg5m,
+            recent1hTokPerSec: avg1h,
+            latestModelName: PricingCatalog.displayName(for: latest.model),
+            sparkline: sparkline,
+            isRecentlyActive: isActive,
+            lastResponseAgeSeconds: lastAge
         )
     }
 

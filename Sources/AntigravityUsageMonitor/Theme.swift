@@ -428,6 +428,47 @@ struct MiniBarsView: View {
     }
 }
 
+struct SparklineView: View {
+    let values: [Double]
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let minV = (values.min() ?? 0) * 0.85
+            let maxV = max(minV + 1, (values.max() ?? 1) * 1.05)
+
+            ZStack {
+                if values.count >= 2 {
+                    Path { path in
+                        for (idx, val) in values.enumerated() {
+                            let x = w * CGFloat(idx) / CGFloat(values.count - 1)
+                            let norm = (val - minV) / (maxV - minV)
+                            let y = h - CGFloat(norm) * (h - 4) - 2
+                            if idx == 0 {
+                                path.move(to: CGPoint(x: x, y: y))
+                            } else {
+                                path.addLine(to: CGPoint(x: x, y: y))
+                            }
+                        }
+                    }
+                    .stroke(Color.white.opacity(0.45), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+
+                    if let last = values.last {
+                        let norm = (last - minV) / (maxV - minV)
+                        let y = h - CGFloat(norm) * (h - 4) - 2
+                        Circle()
+                            .fill(Palette.accent)
+                            .frame(width: 4.5, height: 4.5)
+                            .position(x: w, y: y)
+                    }
+                }
+            }
+        }
+        .frame(width: 78, height: 26)
+    }
+}
+
 struct BrandMarkView: View {
     var size: CGFloat = 14
     var color: Color = Palette.accent

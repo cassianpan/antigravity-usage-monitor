@@ -183,6 +183,35 @@ public struct BillingPeriodInfo: Sendable, Equatable {
     }
 }
 
+public struct OutputSpeedSnapshot: Sendable, Equatable {
+    public let recent5mTokPerSec: Double?
+    public let recent1hTokPerSec: Double?
+    public let latestModelName: String?
+    public let sparkline: [Double]
+    public let isRecentlyActive: Bool
+    public let lastResponseAgeSeconds: TimeInterval?
+
+    public init(
+        recent5mTokPerSec: Double? = nil,
+        recent1hTokPerSec: Double? = nil,
+        latestModelName: String? = nil,
+        sparkline: [Double] = [],
+        isRecentlyActive: Bool = false,
+        lastResponseAgeSeconds: TimeInterval? = nil
+    ) {
+        self.recent5mTokPerSec = recent5mTokPerSec
+        self.recent1hTokPerSec = recent1hTokPerSec
+        self.latestModelName = latestModelName
+        self.sparkline = sparkline
+        self.isRecentlyActive = isRecentlyActive
+        self.lastResponseAgeSeconds = lastResponseAgeSeconds
+    }
+
+    public var displayTokPerSec: Double? {
+        recent5mTokPerSec ?? recent1hTokPerSec
+    }
+}
+
 public struct LocalUsageReport: Sendable, Equatable {
     public let today: UsageWindowSummary
     public let fiveHour: UsageWindowSummary
@@ -190,6 +219,7 @@ public struct LocalUsageReport: Sendable, Equatable {
     public let month: UsageWindowSummary
     public let weekPeriod: BillingPeriodInfo?
     public let monthPeriod: BillingPeriodInfo?
+    public let outputSpeed: OutputSpeedSnapshot
     public let byModel: [ModelUsageSummary]
     public let dailyTrend: [DailyUsagePoint]
     public let conversationCount: Int
@@ -202,6 +232,7 @@ public struct LocalUsageReport: Sendable, Equatable {
         month: UsageWindowSummary = .init(),
         weekPeriod: BillingPeriodInfo? = nil,
         monthPeriod: BillingPeriodInfo? = nil,
+        outputSpeed: OutputSpeedSnapshot = .init(),
         byModel: [ModelUsageSummary] = [],
         dailyTrend: [DailyUsagePoint] = [],
         conversationCount: Int = 0,
@@ -213,6 +244,7 @@ public struct LocalUsageReport: Sendable, Equatable {
         self.month = month
         self.weekPeriod = weekPeriod
         self.monthPeriod = monthPeriod
+        self.outputSpeed = outputSpeed
         self.byModel = byModel
         self.dailyTrend = dailyTrend
         self.conversationCount = conversationCount
