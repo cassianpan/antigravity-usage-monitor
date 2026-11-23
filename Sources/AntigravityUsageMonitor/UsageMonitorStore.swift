@@ -21,6 +21,7 @@ final class UsageMonitorStore {
     private let transcriptIndex: TranscriptIndex
     private let aggregator: UsageAggregator
     private let quotaEvaluator: QuotaEvaluator
+    private let silentSyncer: SilentCLISyncer
     let bridgeInstaller: StatusLineBridgeInstaller
     let preferences: AppPreferences
 
@@ -30,12 +31,17 @@ final class UsageMonitorStore {
     var runningProcesses: [RunningProcessInfo] = []
     var bridgeFeedback: String?
     var isRefreshing: Bool = false
+    var isSyncingOfficial: Bool = false
+    var officialAuthRequired: Bool = false
+    var cliBinaryPath: String? = SilentCLISyncer.locateAgyBinary()?.path
 
     var onMenuBarUpdate: (() -> Void)?
 
     private var timer: Timer?
     private var directoryWatcher: DispatchSourceFileSystemObject?
     private var watchedFD: Int32 = -1
+    private var lastAutoSyncAttempt: Date = .distantPast
+    private var lastSeenTotalTokens: Int = 0
 
     init(
         preferences: AppPreferences,
@@ -47,10 +53,16 @@ final class UsageMonitorStore {
         self.aggregator = UsageAggregator()
         self.quotaEvaluator = QuotaEvaluator()
         self.bridgeInstaller = StatusLineBridgeInstaller(cliConfigDirectory: cliConfigDirectory)
+        self.silentSyncer = SilentCLISyncer(snapshotURL: bridgeInstaller.snapshotURL, evaluator: quotaEvaluator)
 
         refreshNow()
         startTimer()
         startSnapshotWatcher()
+
+        // Silently fetch official limits on launch without requiring an open Terminal.
+        Task { [weak self] in
+            await self?.syncOfficialInBackground(force: true)
+        }
     }
 
     func refreshNow() {
@@ -58,6 +70,7 @@ final class UsageMonitorStore {
         let now = Date()
 
         bridgeStatus = bridgeInstaller.status()
+        cliBinaryPath = SilentCLISyncer.locateAgyBinary()?.path
         let snapshot = quotaEvaluator.loadSnapshot(from: bridgeInstaller.snapshotURL)
         let evaluatedOfficial = quotaEvaluator.evaluate(snapshot: snapshot, now: now)
         officialReport = evaluatedOfficial
@@ -71,10 +84,57 @@ final class UsageMonitorStore {
             billingDay: preferences.billingDay > 0 ? preferences.billingDay : nil
         )
 
+        let currentTokens = localReport.week.totalTokens
+        let tokensIncreased = currentTokens > lastSeenTotalTokens
+        lastSeenTotalTokens = currentTokens
+
         runningProcesses = detectRunningProcesses()
 
         isRefreshing = false
         onMenuBarUpdate?()
+
+        // Auto background official sync when stale (>= 5 min) or after new token activity (>= 2 min).
+        let age = evaluatedOfficial.staleAgeSeconds ?? .infinity
+        let sinceLastAttempt = now.timeIntervalSince(lastAutoSyncAttempt)
+        if !isSyncingOfficial && sinceLastAttempt >= 90 {
+            if !evaluatedOfficial.hasSnapshot || age >= 300 || (tokensIncreased && age >= 120) {
+                Task { [weak self] in
+                    await self?.syncOfficialInBackground(force: false)
+                }
+            }
+        }
+    }
+
+    func syncOfficialInBackground(force: Bool) async {
+        guard !isSyncingOfficial else { return }
+        if !force, Date().timeIntervalSince(lastAutoSyncAttempt) < 90 {
+            return
+        }
+        isSyncingOfficial = true
+        lastAutoSyncAttempt = Date()
+
+        let result = await silentSyncer.sync(timeoutSeconds: 12.0)
+        isSyncingOfficial = false
+
+        switch result {
+        case .synced:
+            officialAuthRequired = false
+            bridgeFeedback = nil
+            refreshNow()
+        case .authRequired:
+            officialAuthRequired = true
+            bridgeFeedback = preferences.language.isChinese
+                ? "agy CLI 需要重新登录，点击下方按钮在终端完成登录后即可关闭终端。"
+                : "agy CLI requires sign-in. Complete login in Terminal once, then you can close Terminal."
+        case .cliNotFound:
+            bridgeFeedback = preferences.language.isChinese
+                ? "未找到 agy CLI，请先安装 Antigravity CLI。"
+                : "agy CLI not found. Please install Antigravity CLI first."
+        case .failed(let msg):
+            if force {
+                bridgeFeedback = msg
+            }
+        }
     }
 
     func restartTimer() {
@@ -82,29 +142,20 @@ final class UsageMonitorStore {
         startTimer()
     }
 
-    /// Prepares the safe statusLine bridge and launches Terminal.app to sign in & sync via `agy`.
+    /// Launches Terminal.app solely for one-time `agy` sign-in. Once signed in,
+    /// the user can close Terminal and the app syncs official limits silently in the background.
     func openTerminalToConnectCLI() {
-        do {
-            let status = try bridgeInstaller.install()
-            bridgeStatus = status
-            startSnapshotWatcher()
-        } catch {
-            bridgeFeedback = preferences.language.isChinese
-                ? "准备桥接脚本失败：\(error.localizedDescription)"
-                : "Failed to prepare statusLine bridge: \(error.localizedDescription)"
-            return
-        }
-
         let terminalCommand = """
         export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; \
-        clear; echo "=== Antigravity Usage Monitor · agy CLI ==="; echo ""; \
+        clear; echo "=== Antigravity Usage Monitor · agy CLI Sign-in ==="; echo ""; \
         if command -v agy >/dev/null 2>&1; then \
-          echo "Launching agy CLI... Sign in if prompted, then run /usage once to sync limits."; \
+          echo "Complete sign-in in agy below. Once signed in, you can quit agy (Ctrl+D) and close this window."; \
+          echo "The menu bar app will refresh official limits automatically in the background."; \
           echo ""; \
           agy; \
         else \
           echo "agy CLI not found in PATH."; \
-          echo "Install Antigravity CLI first, then run 'agy' and '/usage' to sync official limits."; \
+          echo "Install Antigravity CLI first, then run 'agy' to sign in."; \
         fi
         """
 
@@ -125,14 +176,13 @@ final class UsageMonitorStore {
         do {
             try process.run()
             bridgeFeedback = preferences.language.isChinese
-                ? "已打开终端启动 agy。登录并运行一次 /usage 后，官方额度会自动同步到面板。"
-                : "Opened Terminal with agy. Sign in and run /usage once to sync official limits."
+                ? "已打开终端启动 agy。完成登录后即可关闭终端，App 会在后台自动刷新官方额度。"
+                : "Opened Terminal with agy. After signing in you can close Terminal — limits sync automatically in the background."
         } catch {
             bridgeFeedback = preferences.language.isChinese
                 ? "打开终端失败：\(error.localizedDescription)"
                 : "Failed to open Terminal: \(error.localizedDescription)"
         }
-        refreshNow()
     }
 
     func uninstallBridge() {

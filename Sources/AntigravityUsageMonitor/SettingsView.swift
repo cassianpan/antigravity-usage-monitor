@@ -271,9 +271,11 @@ struct SettingsView: View {
         let zh = l10n.zh
         return VStack(alignment: .leading, spacing: 16) {
             QuietNoticeRow(
-                systemImage: "terminal",
-                title: zh ? "agy CLI 官方额度同步" : "agy CLI Official Limits Sync",
-                subtitle: l10n.cliSyncSubtitle,
+                systemImage: "chevron.forward.square",
+                title: zh ? "后台自动同步官方额度（免值守终端）" : "Silent Background Sync (No Terminal Needed)",
+                subtitle: zh
+                    ? "App 通过官方 agy --settings 在后台短时拉取官方 5 小时与每周额度，不修改 settings.json，也无需保持终端开启。仅在首次登录或登录失效时打开一次终端即可。"
+                    : "Fetches official 5-hour & weekly limits silently via agy --settings without keeping Terminal open or modifying settings.json.",
                 actionTitle: l10n.openTerminalConnect,
                 actionIcon: "chevron.forward.square",
                 onAction: { store.openTerminalToConnectCLI() }
@@ -282,39 +284,52 @@ struct SettingsView: View {
             Hairline()
 
             HStack {
-                Text(zh ? "桥接状态" : "Bridge status")
+                Text(zh ? "agy CLI 路径" : "agy CLI binary")
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.secondary)
                 Spacer()
-                switch store.bridgeStatus {
-                case .installedDirect:
-                    Text(zh ? "已接入（保留默认状态栏）" : "Connected (default status line kept)")
-                        .font(.system(size: 11.5, weight: .medium))
+                if let path = store.cliBinaryPath {
+                    Text(path)
+                        .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(Palette.safeGreen)
-                case .installedChained(let orig):
-                    Text(zh ? "已链式包装原脚本" : "Chained with custom script")
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(Palette.safeGreen)
-                        .help(orig)
-                case .notInstalled:
-                    Text(zh ? "未接入" : "Not connected")
+                        .lineLimit(1)
+                } else {
+                    Text(zh ? "未找到 agy" : "Not found")
                         .font(.system(size: 11.5))
-                        .foregroundStyle(Palette.tertiary)
+                        .foregroundStyle(Palette.critical)
                 }
             }
 
-            if store.bridgeStatus.isInstalled {
+            HStack(spacing: 10) {
                 Button {
-                    store.uninstallBridge()
+                    Task { await store.syncOfficialInBackground(force: true) }
                 } label: {
-                    Text(zh ? "移除桥接并还原 settings.json" : "Disconnect & restore settings.json")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Palette.secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                        Text(store.isSyncingOfficial ? (zh ? "正在后台同步…" : "Syncing…") : (zh ? "立即后台同步" : "Sync now in background"))
+                    }
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Palette.text)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressableStyle())
+                .disabled(store.isSyncingOfficial)
+
+                if store.bridgeStatus.isInstalled {
+                    Button {
+                        store.uninstallBridge()
+                    } label: {
+                        Text(zh ? "移除旧版桥接配置" : "Remove legacy bridge")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Palette.secondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    }
+                    .buttonStyle(PressableStyle())
+                }
             }
 
             if let feedback = store.bridgeFeedback {

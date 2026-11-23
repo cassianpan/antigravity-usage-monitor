@@ -163,7 +163,11 @@ struct PanelView: View {
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(Palette.secondary)
                     Spacer()
-                    if let age = store.officialReport.staleAgeSeconds {
+                    if store.isSyncingOfficial {
+                        Text(l10n.zh ? "正在同步…" : "Syncing…")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Palette.accent)
+                    } else if let age = store.officialReport.staleAgeSeconds {
                         let ageText = UsageFormatter.relativeAge(age)
                         let label = l10n.zh ? "\(ageText)同步" : "Synced \(ageText)"
                         Text(store.officialReport.isStale && l10n.zh ? "\(label) · 建议刷新" : label)
@@ -176,13 +180,16 @@ struct PanelView: View {
             .buttonStyle(.plain)
 
             if !preferences.limitsCollapsed {
-                let needsLogin = store.officialReport.agentState == "authenticating"
+                let needsLogin = store.officialAuthRequired
+                    || store.officialReport.agentState == "authenticating"
                     || (store.officialReport.hasSnapshot && (store.officialReport.email?.isEmpty ?? true))
 
                 if !store.officialReport.hasSnapshot || store.officialReport.buckets.isEmpty {
                     QuietNoticeRow(
                         systemImage: "chevron.forward.square",
-                        title: l10n.cliSyncTitle,
+                        title: store.isSyncingOfficial
+                            ? (l10n.zh ? "正在后台同步官方额度…" : "Syncing official limits in background…")
+                            : l10n.cliSyncTitle,
                         subtitle: l10n.cliSyncSubtitle,
                         actionTitle: l10n.openTerminalConnect,
                         actionIcon: "chevron.forward.square",
@@ -197,15 +204,11 @@ struct PanelView: View {
                         }
                     }
 
-                    if needsLogin || store.officialReport.isStale {
+                    if needsLogin {
                         QuietNoticeRow(
                             systemImage: "chevron.forward.square",
-                            title: needsLogin
-                                ? (l10n.zh ? "agy CLI 的登录已失效" : "agy CLI sign-in required")
-                                : (l10n.zh ? "CLI 额度同步已过期" : "CLI limit snapshot is stale"),
-                            subtitle: needsLogin
-                                ? (l10n.zh ? "登录到期或已退出，重新登录后自动恢复" : "Session expired or signed out. Sign in again to resume.")
-                                : l10n.cliSyncSubtitle,
+                            title: l10n.zh ? "agy CLI 的登录已失效" : "agy CLI sign-in required",
+                            subtitle: l10n.zh ? "登录到期或已退出，重新登录后即可关闭终端" : "Session expired or signed out. Sign in once, then close Terminal.",
                             actionTitle: l10n.openTerminalConnect,
                             actionIcon: "chevron.forward.square",
                             isActionHovered: interaction.isLoginButtonHovered,

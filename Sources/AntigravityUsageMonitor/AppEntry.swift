@@ -106,6 +106,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         installDismissMonitors()
         interaction.triggerRefreshSpin()
+        Task { [weak self] in
+            await self?.store.syncOfficialInBackground(force: false)
+        }
     }
 
     private func closePanel() {
@@ -118,6 +121,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func triggerRefreshWithSpin() {
         interaction.triggerRefreshSpin()
         store.refreshNow()
+        Task { [weak self] in
+            await self?.store.syncOfficialInBackground(force: true)
+        }
     }
 
     private func positionPanelUnderStatusItem() {

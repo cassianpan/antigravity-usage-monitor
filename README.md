@@ -6,8 +6,9 @@ A minimal, native macOS menu bar app (Swift 6 / macOS 15+) for monitoring **Goog
 
 ## Highlights
 
-- **Official 5-Hour & Weekly Limits (Zero Packet Capture)**
-  - Uses Antigravity CLI's official `statusLine` JSON hook via a lightweight local bridge script.
+- **Official 5-Hour & Weekly Limits (Zero Packet Capture, No Open Terminal Needed)**
+  - Silently fetches official quota snapshots in the background via `agy --settings` without mutating your `settings.json` or keeping any Terminal window open.
+  - Only requires a one-time Terminal sign-in if not authenticated yet; after signing in, you can close Terminal and the app syncs automatically.
   - Displays remaining/used percentages, countdown timers, and a **Safe Line** pace indicator (5-hour linear clock; weekly +1/7 per day — turns red when over pace).
   - Automatically drops a limit to 0% locally once `reset_time` elapses.
 - **Exact Cache & Token Breakdown**

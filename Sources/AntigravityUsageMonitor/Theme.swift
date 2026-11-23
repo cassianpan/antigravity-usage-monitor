@@ -294,11 +294,11 @@ struct L10n {
     var settings: String { zh ? "设置..." : "Settings..." }
     var refresh: String { zh ? "立即刷新" : "Refresh" }
     var quit: String { zh ? "退出" : "Quit" }
-    var cliSyncTitle: String { zh ? "等待 agy CLI 同步额度" : "Waiting for agy CLI sync" }
+    var cliSyncTitle: String { zh ? "需要登录 agy CLI" : "agy CLI sign-in required" }
     var cliSyncSubtitle: String {
         zh
-            ? "打开终端登录并运行一次 /usage 后，官方限额会自动恢复"
-            : "Sign in via Terminal and run /usage once to sync official limits"
+            ? "在终端完成一次登录后即可关闭终端，之后自动后台同步官方额度"
+            : "Sign in once in Terminal, then close it — official limits sync automatically in the background"
     }
     var openTerminalConnect: String { zh ? "在终端中登录 agy CLI" : "Sign in with agy CLI in Terminal" }
     var unpricedBadge: String { zh ? "含未定价模型" : "Includes unpriced" }
