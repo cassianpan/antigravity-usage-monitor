@@ -167,11 +167,29 @@ public struct DailyUsagePoint: Sendable, Equatable, Identifiable {
     }
 }
 
+public struct BillingPeriodInfo: Sendable, Equatable {
+    public let start: Date
+    public let end: Date
+    public let currentDay: Int
+    public let totalDays: Int
+    public let remainingDays: Int
+
+    public init(start: Date, end: Date, currentDay: Int, totalDays: Int, remainingDays: Int) {
+        self.start = start
+        self.end = end
+        self.currentDay = currentDay
+        self.totalDays = totalDays
+        self.remainingDays = remainingDays
+    }
+}
+
 public struct LocalUsageReport: Sendable, Equatable {
     public let today: UsageWindowSummary
     public let fiveHour: UsageWindowSummary
     public let week: UsageWindowSummary
     public let month: UsageWindowSummary
+    public let weekPeriod: BillingPeriodInfo?
+    public let monthPeriod: BillingPeriodInfo?
     public let byModel: [ModelUsageSummary]
     public let dailyTrend: [DailyUsagePoint]
     public let conversationCount: Int
@@ -182,6 +200,8 @@ public struct LocalUsageReport: Sendable, Equatable {
         fiveHour: UsageWindowSummary = .init(),
         week: UsageWindowSummary = .init(),
         month: UsageWindowSummary = .init(),
+        weekPeriod: BillingPeriodInfo? = nil,
+        monthPeriod: BillingPeriodInfo? = nil,
         byModel: [ModelUsageSummary] = [],
         dailyTrend: [DailyUsagePoint] = [],
         conversationCount: Int = 0,
@@ -191,6 +211,8 @@ public struct LocalUsageReport: Sendable, Equatable {
         self.fiveHour = fiveHour
         self.week = week
         self.month = month
+        self.weekPeriod = weekPeriod
+        self.monthPeriod = monthPeriod
         self.byModel = byModel
         self.dailyTrend = dailyTrend
         self.conversationCount = conversationCount

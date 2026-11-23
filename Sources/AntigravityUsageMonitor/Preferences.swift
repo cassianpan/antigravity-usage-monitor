@@ -85,6 +85,11 @@ final class AppPreferences {
         didSet { defaults.set(refreshIntervalSeconds, forKey: Keys.refreshInterval) }
     }
 
+    /// 0 = unset (natural month), 1...31 = subscription billing day of month.
+    var billingDay: Int {
+        didSet { defaults.set(billingDay, forKey: Keys.billingDay) }
+    }
+
     var selectedSpendTab: SpendWindowTab {
         didSet { defaults.set(selectedSpendTab.rawValue, forKey: Keys.spendTab) }
     }
@@ -135,6 +140,7 @@ final class AppPreferences {
         static let contextDensity = "panel.contextDensity"
         static let spendDensity = "panel.spendDensity"
         static let refreshInterval = "refresh.intervalSeconds"
+        static let billingDay = "subscription.billingDay"
         static let spendTab = "panel.spendTab"
     }
 
@@ -151,6 +157,7 @@ final class AppPreferences {
             Keys.contextDensity: SectionDensity.detailed.rawValue,
             Keys.spendDensity: SectionDensity.detailed.rawValue,
             Keys.refreshInterval: 30,
+            Keys.billingDay: 0,
             Keys.spendTab: SpendWindowTab.week.rawValue,
         ])
 
@@ -176,6 +183,7 @@ final class AppPreferences {
         self.contextSectionDensity = SectionDensity(rawValue: defaults.string(forKey: Keys.contextDensity) ?? "") ?? .detailed
         self.spendSectionDensity = SectionDensity(rawValue: defaults.string(forKey: Keys.spendDensity) ?? "") ?? .detailed
         self.refreshIntervalSeconds = max(10, defaults.integer(forKey: Keys.refreshInterval))
+        self.billingDay = max(0, min(31, defaults.integer(forKey: Keys.billingDay)))
         self.selectedSpendTab = SpendWindowTab(rawValue: defaults.string(forKey: Keys.spendTab) ?? "") ?? .week
     }
 }

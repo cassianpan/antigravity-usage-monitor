@@ -64,14 +64,33 @@ struct PanelView: View {
             Spacer()
 
             if let tier = store.officialReport.planTier, !tier.isEmpty {
-                PlanTagView(rawTier: tier)
-                    .panelTip("header.plan", center: tipCenter, alignment: .trailing) {
-                        var rows = [Tip.Row(l10n.zh ? "订阅方案" : "Plan", tier)]
-                        if let email = store.officialReport.email, !email.isEmpty {
-                            rows.append(Tip.Row(l10n.zh ? "账号" : "Account", email))
-                        }
-                        return Tip(rows: rows)
+                HStack(spacing: 6) {
+                    PlanTagView(rawTier: tier)
+                    if preferences.billingDay > 0, let monthPeriod = store.localReport.monthPeriod {
+                        let days = monthPeriod.remainingDays
+                        Text(l10n.zh ? "还剩 \(days) 天" : "\(days)d left")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(days <= 3 ? Palette.warning : Palette.secondary)
                     }
+                }
+                .panelTip("header.plan", center: tipCenter, alignment: .trailing) {
+                    var rows = [Tip.Row(l10n.zh ? "订阅方案" : "Plan", tier)]
+                    if let email = store.officialReport.email, !email.isEmpty {
+                        rows.append(Tip.Row(l10n.zh ? "账号" : "Account", email))
+                    }
+                    if preferences.billingDay > 0, let monthPeriod = store.localReport.monthPeriod {
+                        rows.append(Tip.Row(
+                            l10n.zh ? "账单日" : "Billing day",
+                            l10n.zh ? "每月 \(preferences.billingDay) 日" : "Day \(preferences.billingDay)",
+                            separated: true
+                        ))
+                        rows.append(Tip.Row(
+                            l10n.zh ? "本周期剩余" : "Period left",
+                            l10n.zh ? "\(monthPeriod.remainingDays) 天" : "\(monthPeriod.remainingDays) days"
+                        ))
+                    }
+                    return Tip(rows: rows)
+                }
             }
         }
         .padding(.horizontal, Metrics.padding)
@@ -367,6 +386,26 @@ struct PanelView: View {
             }
         }()
 
+        let activePeriod: BillingPeriodInfo? = {
+            switch preferences.selectedSpendTab {
+            case .month: return store.localReport.monthPeriod
+            case .week: return store.localReport.weekPeriod
+            case .today: return nil
+            }
+        }()
+
+        let periodHeaderText: String = {
+            let fmt = DateFormatter()
+            fmt.locale = Locale(identifier: l10n.zh ? "zh_CN" : "en_US_POSIX")
+            if let period = activePeriod {
+                fmt.dateFormat = l10n.zh ? "M月d日 HH:mm:ss" : "MMM d, HH:mm:ss"
+                return "\(fmt.string(from: period.start)) – \(fmt.string(from: period.end))"
+            } else {
+                fmt.dateFormat = l10n.zh ? "M月d日" : "MMM d"
+                return fmt.string(from: store.localReport.updatedAt)
+            }
+        }()
+
         return VStack(alignment: .leading, spacing: 9) {
             Button {
                 preferences.spendCollapsed.toggle()
@@ -376,9 +415,15 @@ struct PanelView: View {
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(Palette.secondary)
                     Spacer()
-                    Text("\(store.localReport.conversationCount) \(l10n.zh ? "会话" : "sessions")")
-                        .font(.system(size: 10.5))
+                    Text(periodHeaderText)
+                        .font(.system(size: 10.5, design: .monospaced))
                         .foregroundStyle(Palette.tertiary)
+                        .lineLimit(1)
+                        .panelTip("spend.period", center: tipCenter, alignment: .trailing) {
+                            Tip(rows: [
+                                Tip.Row(l10n.zh ? "本地扫描会话" : "Local sessions", "\(store.localReport.conversationCount)"),
+                            ])
+                        }
                 }
                 .contentShape(Rectangle())
             }
@@ -447,6 +492,16 @@ struct PanelView: View {
                                         note: summary.unpricedModels.joined(separator: ", ")
                                     )
                                 }
+                        } else if let period = activePeriod {
+                            let dayLabel = l10n.zh
+                                ? "第 \(period.currentDay) / \(period.totalDays) 天"
+                                : "Day \(period.currentDay) of \(period.totalDays)"
+                            let savedPart = summary.cacheSavingsUSD > 0
+                                ? " · \(l10n.savedPrefix)\(UsageFormatter.currency(summary.cacheSavingsUSD))"
+                                : ""
+                            Text(dayLabel + savedPart)
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundStyle(Palette.tertiary)
                         } else if summary.cacheSavingsUSD > 0 {
                             Text("\(l10n.savedPrefix)\(UsageFormatter.currency(summary.cacheSavingsUSD))")
                                 .font(.system(size: 10.5, design: .monospaced))

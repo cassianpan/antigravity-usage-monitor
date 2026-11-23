@@ -67,7 +67,8 @@ final class UsageMonitorStore {
             records: scan.records,
             conversationCount: scan.conversationCount,
             now: now,
-            officialWeeklyResetTime: evaluatedOfficial.primaryWeekly?.resetTime
+            officialWeeklyResetTime: evaluatedOfficial.primaryWeekly?.resetTime,
+            billingDay: preferences.billingDay > 0 ? preferences.billingDay : nil
         )
 
         runningProcesses = detectRunningProcesses()

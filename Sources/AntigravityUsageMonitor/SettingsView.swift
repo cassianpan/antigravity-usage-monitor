@@ -376,6 +376,31 @@ struct SettingsView: View {
             Hairline()
 
             HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(zh ? "订阅账单日" : "Billing day")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Palette.text)
+                    Text(zh ? "设置后在顶部显示订阅剩余天数，并按账单日切分本月周期" : "Shows days left next to your plan badge and aligns the monthly spend cycle")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Palette.tertiary)
+                }
+                Spacer()
+                Picker("", selection: $preferences.billingDay) {
+                    Text(zh ? "未设置" : "Unset").tag(0)
+                    ForEach(1...31, id: \.self) { day in
+                        Text(zh ? "每月 \(day) 日" : "Day \(day)").tag(day)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 105)
+                .onChange(of: preferences.billingDay) {
+                    store.refreshNow()
+                }
+            }
+
+            Hairline()
+
+            HStack {
                 Text(zh ? "刷新频率" : "Refresh interval")
                     .font(.system(size: 12.5))
                     .foregroundStyle(Palette.text)
