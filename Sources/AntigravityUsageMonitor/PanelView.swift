@@ -75,6 +75,38 @@ struct PanelView: View {
 
             Spacer()
 
+            if let update = store.visibleAvailableUpdate {
+                Button {
+                    store.openUpdateReleasePage()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 10))
+                        Text("v\(update.version)")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(Palette.accent)
+                    .padding(.horizontal, 6)
+                    .frame(height: 18)
+                    .background(Capsule().fill(Palette.accent.opacity(0.16)))
+                    .overlay(Capsule().strokeBorder(Palette.accent.opacity(0.35), lineWidth: 0.75))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(FlatDisclosureButtonStyle())
+                .panelTip("header.update", center: tipCenter, alignment: .trailing) {
+                    Tip(
+                        title: l10n.zh ? "发现新版本" : "Update available",
+                        rows: [
+                            Tip.Row(l10n.zh ? "当前版本" : "Current", "v\(store.currentAppVersion)"),
+                            Tip.Row(l10n.zh ? "最新版本" : "Latest", "v\(update.version)", color: Palette.accent),
+                        ],
+                        note: l10n.zh
+                            ? "点击前往 GitHub 下载，或通过 brew upgrade --cask antigravity-usage-monitor 升级。"
+                            : "Click to open GitHub Releases, or run brew upgrade --cask antigravity-usage-monitor."
+                    )
+                }
+            }
+
             if let tier = store.officialReport.planTier, !tier.isEmpty {
                 HStack(spacing: 6) {
                     PlanTagView(rawTier: tier)

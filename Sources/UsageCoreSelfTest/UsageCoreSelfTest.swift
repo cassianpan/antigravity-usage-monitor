@@ -268,6 +268,15 @@ struct UsageCoreSelfTest {
             check(sl?["command"] as? String == customScript.path && sl?["padding"] as? Int == 1, "Exact original statusLine restored")
         }
 
+        runCase("S4: AppVersionComparator compares semantic versions accurately") {
+            check(AppVersionComparator.isNewer("v0.1.3", than: "0.1.2") == true, "0.1.3 > 0.1.2")
+            check(AppVersionComparator.isNewer("v0.2.0", than: "0.1.9") == true, "0.2.0 > 0.1.9")
+            check(AppVersionComparator.isNewer("1.0.0", than: "0.9.9") == true, "1.0.0 > 0.9.9")
+            check(AppVersionComparator.isNewer("v0.1.3", than: "0.1.3") == false, "0.1.3 == 0.1.3")
+            check(AppVersionComparator.isNewer("v0.1.2", than: "0.1.3") == false, "0.1.2 < 0.1.3")
+            check(AppVersionComparator.isNewer("v0.1.3-beta.1", than: "0.1.2") == true, "Pre-release suffix stripped")
+        }
+
         print("Summary: \(runner.passed) assertions passed, \(runner.failed) failed.")
         if runner.failed > 0 {
             exit(1)

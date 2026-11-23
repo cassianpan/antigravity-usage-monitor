@@ -110,6 +110,14 @@ final class AppPreferences {
         didSet { defaults.set(enableBillingReminders, forKey: Keys.enableBillingReminders) }
     }
 
+    var autoCheckUpdates: Bool {
+        didSet { defaults.set(autoCheckUpdates, forKey: Keys.autoCheckUpdates) }
+    }
+
+    var dismissedUpdateVersion: String {
+        didSet { defaults.set(dismissedUpdateVersion, forKey: Keys.dismissedUpdateVersion) }
+    }
+
     func formatMoney(_ usd: Double) -> String {
         UsageFormatter.money(usd, currency: displayCurrency, cnyRate: cnyExchangeRate)
     }
@@ -174,6 +182,8 @@ final class AppPreferences {
         static let cnyRate = "general.cnyExchangeRate"
         static let enableUsageAlerts = "alerts.usage"
         static let enableBillingReminders = "alerts.billing"
+        static let autoCheckUpdates = "updates.autoCheck"
+        static let dismissedUpdateVersion = "updates.dismissedVersion"
         static let spendTab = "panel.spendTab"
     }
 
@@ -196,6 +206,8 @@ final class AppPreferences {
             Keys.cnyRate: 7.25,
             Keys.enableUsageAlerts: true,
             Keys.enableBillingReminders: true,
+            Keys.autoCheckUpdates: true,
+            Keys.dismissedUpdateVersion: "",
             Keys.spendTab: SpendWindowTab.week.rawValue,
         ])
 
@@ -228,6 +240,8 @@ final class AppPreferences {
         self.cnyExchangeRate = savedRate > 0.5 ? savedRate : 7.25
         self.enableUsageAlerts = defaults.bool(forKey: Keys.enableUsageAlerts)
         self.enableBillingReminders = defaults.bool(forKey: Keys.enableBillingReminders)
+        self.autoCheckUpdates = defaults.bool(forKey: Keys.autoCheckUpdates)
+        self.dismissedUpdateVersion = defaults.string(forKey: Keys.dismissedUpdateVersion) ?? ""
         self.selectedSpendTab = SpendWindowTab(rawValue: defaults.string(forKey: Keys.spendTab) ?? "") ?? .week
     }
 }

@@ -160,6 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         interaction.triggerRefreshSpin()
         Task { [weak self] in
             await self?.store.syncOfficialInBackground(force: false)
+            await self?.store.checkForUpdatesIfNeeded()
         }
     }
 

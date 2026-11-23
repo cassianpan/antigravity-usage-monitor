@@ -30,6 +30,7 @@ final class UsageMonitorStore {
     private let aggregator: UsageAggregator
     private let quotaEvaluator: QuotaEvaluator
     private let silentSyncer: SilentCLISyncer
+    private let updateChecker: UpdateChecker
     let bridgeInstaller: StatusLineBridgeInstaller
     let preferences: AppPreferences
 
@@ -43,6 +44,23 @@ final class UsageMonitorStore {
     var officialAuthRequired: Bool = false
     var cliBinaryPath: String? = SilentCLISyncer.locateAgyBinary()?.path
 
+    let currentAppVersion: String = {
+        let raw = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+        return AppVersionComparator.normalize(raw)
+    }()
+    var availableUpdate: AppUpdateInfo? = nil
+    var isCheckingUpdates: Bool = false
+    var updateStatusText: String? = nil
+    var copiedBrewUpgrade: Bool = false
+
+    var visibleAvailableUpdate: AppUpdateInfo? {
+        guard let info = availableUpdate else { return nil }
+        if preferences.dismissedUpdateVersion == info.version {
+            return nil
+        }
+        return info
+    }
+
     var onMenuBarUpdate: (() -> Void)?
     var onSyncStateChanged: ((Bool) -> Void)?
 
@@ -52,6 +70,7 @@ final class UsageMonitorStore {
     private var watcherDebounceTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var lastAutoSyncAttempt: Date = .distantPast
+    private var lastUpdateCheckAt: Date = .distantPast
     private var lastSeenTotalTokens: Int = 0
 
     init(
@@ -65,6 +84,7 @@ final class UsageMonitorStore {
         self.quotaEvaluator = QuotaEvaluator()
         self.bridgeInstaller = StatusLineBridgeInstaller(cliConfigDirectory: cliConfigDirectory)
         self.silentSyncer = SilentCLISyncer(snapshotURL: bridgeInstaller.snapshotURL, evaluator: quotaEvaluator)
+        self.updateChecker = UpdateChecker()
 
         refreshNow()
         startTimer()
@@ -72,6 +92,70 @@ final class UsageMonitorStore {
 
         Task { [weak self] in
             await self?.syncOfficialInBackground(force: true)
+        }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            await self?.checkForUpdatesIfNeeded()
+        }
+    }
+
+    func checkForUpdatesIfNeeded() async {
+        guard preferences.autoCheckUpdates else { return }
+        guard Date().timeIntervalSince(lastUpdateCheckAt) >= 6 * 3600 else { return }
+        await checkForUpdates(manual: false)
+    }
+
+    func checkForUpdates(manual: Bool) async {
+        guard !isCheckingUpdates else { return }
+        isCheckingUpdates = true
+        lastUpdateCheckAt = Date()
+        let zh = preferences.language.isChinese
+        if manual {
+            updateStatusText = zh ? "正在检查更新…" : "Checking for updates…"
+        }
+
+        let result = await updateChecker.checkLatestRelease(currentVersion: currentAppVersion)
+        isCheckingUpdates = false
+
+        switch result {
+        case .updateAvailable(let info):
+            availableUpdate = info
+            if manual {
+                preferences.dismissedUpdateVersion = ""
+            }
+            updateStatusText = zh ? "发现新版本 v\(info.version)" : "Update available: v\(info.version)"
+        case .upToDate(let current):
+            availableUpdate = nil
+            if manual {
+                updateStatusText = zh ? "已是最新版本 (v\(current))" : "Up to date (v\(current))"
+            }
+        case .failed(let reason):
+            if manual {
+                updateStatusText = zh ? "检查失败：\(reason)" : "Check failed: \(reason)"
+            }
+        }
+    }
+
+    func openUpdateReleasePage() {
+        let url = availableUpdate?.releaseURL
+            ?? URL(string: "https://github.com/cassianpan/antigravity-usage-monitor/releases/latest")!
+        NSWorkspace.shared.open(url)
+    }
+
+    func copyBrewUpgradeCommand() {
+        let cmd = "brew update && brew upgrade --cask antigravity-usage-monitor"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(cmd, forType: .string)
+        copiedBrewUpgrade = true
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            self?.copiedBrewUpgrade = false
+        }
+    }
+
+    func dismissAvailableUpdate() {
+        if let version = availableUpdate?.version {
+            preferences.dismissedUpdateVersion = version
         }
     }
 

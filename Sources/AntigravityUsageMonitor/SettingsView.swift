@@ -532,6 +532,80 @@ struct SettingsView: View {
                     .foregroundStyle(Palette.critical)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            Hairline()
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(zh ? "软件更新" : "Software updates")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Palette.text)
+                        Text(zh ? "当前版本 v\(store.currentAppVersion) · 自动检查 GitHub 新版本" : "Current v\(store.currentAppVersion) · Check GitHub Releases automatically")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Palette.tertiary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $preferences.autoCheckUpdates)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .tint(Palette.accent)
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        Task { await store.checkForUpdates(manual: true) }
+                    } label: {
+                        Text(store.isCheckingUpdates ? (zh ? "检查中…" : "Checking…") : (zh ? "检查更新" : "Check now"))
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(Palette.text)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.75)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(store.isCheckingUpdates)
+
+                    if store.availableUpdate != nil {
+                        Button {
+                            store.openUpdateReleasePage()
+                        } label: {
+                            Text(zh ? "前往下载" : "Download")
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(Color(hex: 0x0A1930))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Palette.accent, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            store.copyBrewUpgradeCommand()
+                        } label: {
+                            Text(store.copiedBrewUpgrade ? (zh ? "已复制命令" : "Copied") : (zh ? "复制 brew 升级" : "Copy brew cmd"))
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Palette.secondary)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 5)
+                                .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Spacer()
+
+                    if let status = store.updateStatusText {
+                        Text(status)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(store.availableUpdate != nil ? Palette.accent : Palette.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+            }
         }
     }
 }
