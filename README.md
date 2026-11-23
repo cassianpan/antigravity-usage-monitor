@@ -14,7 +14,7 @@ for cache hit rate, model split, and API-equivalent spend. Native Swift 6, zero 
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white)](Package.swift)
 [![License: MIT](https://img.shields.io/badge/license-MIT-4a4a4a?style=flat-square)](LICENSE)
 
-[**Download**](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest) · [中文说明](README.zh-CN.md)
+[**Download**](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest) · [中文说明](README.zh-CN.md) · [Changelog](CHANGELOG.md)
 
 </div>
 

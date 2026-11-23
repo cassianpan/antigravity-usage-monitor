@@ -14,7 +14,7 @@
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white)](Package.swift)
 [![License: MIT](https://img.shields.io/badge/license-MIT-4a4a4a?style=flat-square)](LICENSE)
 
-[**下载最新版**](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest) · [English README](README.md)
+[**下载最新版**](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest) · [English README](README.md) · [更新日志](CHANGELOG.md)
 
 </div>
 
