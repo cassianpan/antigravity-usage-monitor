@@ -95,16 +95,22 @@ struct SettingsView: View {
                         .fill(Color.white.opacity(0.18))
                         .frame(width: 14, height: 3)
 
-                    HStack(spacing: 8) {
+                    HStack(spacing: columns.count == 1 ? 5 : 8) {
                         BrandMarkView(size: 12, color: Palette.accent)
-                        ForEach(columns) { col in
-                            VStack(spacing: 0) {
-                                Text(col.topLabel)
-                                    .font(.system(size: 7, weight: .semibold))
-                                    .foregroundStyle(Palette.secondary)
-                                Text(col.value)
-                                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                                    .foregroundStyle(Color(hex: col.valueHex))
+                        if columns.count == 1, let only = columns.first {
+                            Text(only.value)
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(Color(hex: only.valueHex))
+                        } else {
+                            ForEach(columns) { col in
+                                VStack(spacing: 0) {
+                                    Text(col.topLabel)
+                                        .font(.system(size: 7, weight: .semibold))
+                                        .foregroundStyle(Palette.secondary)
+                                    Text(col.value)
+                                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(Color(hex: col.valueHex))
+                                }
                             }
                         }
                     }
