@@ -1,12 +1,12 @@
 # Antigravity Usage Monitor
 
-[![CI](https://github.com/panmingxuan/antigravity-usage-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/panmingxuan/antigravity-usage-monitor/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/panmingxuan/antigravity-usage-monitor?style=flat-square&color=4F8CFF&label=release)](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest)
-[![macOS 15+](https://img.shields.io/badge/macOS-15%2B-2b2b2b?style=flat-square)](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest)
+[![CI](https://github.com/cassianpan/antigravity-usage-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/cassianpan/antigravity-usage-monitor/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/cassianpan/antigravity-usage-monitor?style=flat-square&color=4F8CFF&label=release)](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest)
+[![macOS 15+](https://img.shields.io/badge/macOS-15%2B-2b2b2b?style=flat-square)](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest)
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?style=flat-square)](Package.swift)
 [![License: MIT](https://img.shields.io/badge/license-MIT-4a4a4a?style=flat-square)](LICENSE)
 
-[中文说明](README.zh-CN.md) · [Latest Release](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest)
+[中文说明](README.zh-CN.md) · [Latest Release](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest)
 
 A minimal, native macOS menu bar app (Swift 6 / macOS 15+) for monitoring **Google Antigravity** usage without packet capture, private endpoints, or keychain snooping.
 
@@ -37,11 +37,11 @@ A minimal, native macOS menu bar app (Swift 6 / macOS 15+) for monitoring **Goog
 ## Install
 
 ### Option 1: GitHub Releases (Recommended)
-Download the `.dmg` or `.zip` from [GitHub Releases](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest) and move **Antigravity Usage Monitor.app** into `/Applications`.
+Download the `.dmg` or `.zip` from [GitHub Releases](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest) and move **Antigravity Usage Monitor.app** into `/Applications`.
 
 ### Option 2: Homebrew Cask
 ```bash
-brew tap panmingxuan/antigravity-usage-monitor https://github.com/panmingxuan/antigravity-usage-monitor
+brew tap cassianpan/antigravity-usage-monitor https://github.com/cassianpan/antigravity-usage-monitor
 brew install --cask antigravity-usage-monitor
 ```
 

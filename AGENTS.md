@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## 任务平台
-- 平台：github（仓库 `panmingxuan/antigravity-usage-monitor`）
+- 平台：github（仓库 `cassianpan/antigravity-usage-monitor`）
 - 计划位置：issue
 - 创建 issue 前：不需要
 

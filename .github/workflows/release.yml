@@ -64,7 +64,7 @@ jobs:
           - **ZIP**: Download `AntigravityUsageMonitor-${VERSION}-macOS-arm64.zip`, unzip, and move **Antigravity Usage Monitor.app** into `/Applications`.
           - **Homebrew Cask**:
             ```bash
-            brew tap panmingxuan/antigravity-usage-monitor https://github.com/panmingxuan/antigravity-usage-monitor
+            brew tap cassianpan/antigravity-usage-monitor https://github.com/cassianpan/antigravity-usage-monitor
             brew install --cask antigravity-usage-monitor
             ```
 
