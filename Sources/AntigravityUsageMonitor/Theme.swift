@@ -182,47 +182,61 @@ struct PlanTagView: View {
     }
 }
 
-/// Quiet icon-box hint row matching Claude Usage Monitor's empty/login notice blocks.
+/// Quiet icon-box hint row matching Claude Usage Monitor's login/empty notice blocks.
 struct QuietNoticeRow: View {
     let systemImage: String
     let title: String
     let subtitle: String
     var actionTitle: String? = nil
-    var actionIcon: String = "terminal"
+    var actionIcon: String = "chevron.forward.square"
+    var isActionHovered: Bool = false
+    var onActionHover: ((Bool) -> Void)? = nil
     var onAction: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 11) {
             ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.white.opacity(0.06))
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
                 Image(systemName: systemImage)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 13.5, weight: .medium))
                     .foregroundStyle(Palette.secondary)
             }
-            .frame(width: 30, height: 30)
+            .frame(width: 32, height: 32)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(Palette.text)
                 Text(subtitle)
                     .font(.system(size: 11))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let actionTitle, let onAction {
                     Button(action: onAction) {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 6) {
                             Image(systemName: actionIcon)
-                                .font(.system(size: 10.5))
+                                .font(.system(size: 11, weight: .medium))
                             Text(actionTitle)
-                                .font(.system(size: 11.5, weight: .medium))
+                                .font(.system(size: 12, weight: .medium))
                         }
                         .foregroundStyle(Palette.text)
-                        .padding(.top, 4)
+                        .padding(.horizontal, 11)
+                        .frame(height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(isActionHovered ? Color.white.opacity(0.15) : Color.white.opacity(0.08))
+                        )
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(PressableStyle())
+                    .onHover { inside in
+                        withAnimation(.easeOut(duration: 0.14)) {
+                            onActionHover?(inside)
+                        }
+                    }
+                    .padding(.top, 5)
                 }
             }
             Spacer(minLength: 0)

@@ -157,13 +157,18 @@ struct PanelView: View {
             .buttonStyle(.plain)
 
             if !preferences.limitsCollapsed {
+                let needsLogin = store.officialReport.agentState == "authenticating"
+                    || (store.officialReport.hasSnapshot && (store.officialReport.email?.isEmpty ?? true))
+
                 if !store.officialReport.hasSnapshot || store.officialReport.buckets.isEmpty {
                     QuietNoticeRow(
-                        systemImage: "terminal",
+                        systemImage: "chevron.forward.square",
                         title: l10n.cliSyncTitle,
                         subtitle: l10n.cliSyncSubtitle,
                         actionTitle: l10n.openTerminalConnect,
                         actionIcon: "chevron.forward.square",
+                        isActionHovered: interaction.isLoginButtonHovered,
+                        onActionHover: { interaction.isLoginButtonHovered = $0 },
                         onAction: { store.openTerminalToConnectCLI() }
                     )
                 } else {
@@ -173,16 +178,22 @@ struct PanelView: View {
                         }
                     }
 
-                    if store.officialReport.isStale {
+                    if needsLogin || store.officialReport.isStale {
                         QuietNoticeRow(
-                            systemImage: "terminal",
-                            title: l10n.zh ? "CLI 快照已有一段时间未更新" : "CLI snapshot is stale",
-                            subtitle: l10n.cliSyncSubtitle,
+                            systemImage: "chevron.forward.square",
+                            title: needsLogin
+                                ? (l10n.zh ? "agy CLI 的登录已失效" : "agy CLI sign-in required")
+                                : (l10n.zh ? "CLI 额度同步已过期" : "CLI limit snapshot is stale"),
+                            subtitle: needsLogin
+                                ? (l10n.zh ? "登录到期或已退出，重新登录后自动恢复" : "Session expired or signed out. Sign in again to resume.")
+                                : l10n.cliSyncSubtitle,
                             actionTitle: l10n.openTerminalConnect,
                             actionIcon: "chevron.forward.square",
+                            isActionHovered: interaction.isLoginButtonHovered,
+                            onActionHover: { interaction.isLoginButtonHovered = $0 },
                             onAction: { store.openTerminalToConnectCLI() }
                         )
-                        .padding(.top, 4)
+                        .padding(.top, 6)
                     }
                 }
             }

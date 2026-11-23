@@ -295,6 +295,7 @@ final class PanelInteractionState {
     var hoveredBucketId: String? = nil
     var hoveredBarIndex: Int? = nil
     var hoveredTab: SpendWindowTab? = nil
+    var isLoginButtonHovered: Bool = false
     var refreshSpinDegrees: Double = 0
 
     func triggerRefreshSpin() {
@@ -308,6 +309,7 @@ final class PanelInteractionState {
         hoveredBucketId = nil
         hoveredBarIndex = nil
         hoveredTab = nil
+        isLoginButtonHovered = false
     }
 }
 

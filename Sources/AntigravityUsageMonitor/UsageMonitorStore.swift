@@ -95,7 +95,8 @@ final class UsageMonitorStore {
         }
 
         let terminalCommand = """
-        clear; echo "=== Antigravity Usage Monitor · CLI Sync ==="; echo ""; \
+        export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; \
+        clear; echo "=== Antigravity Usage Monitor · agy CLI ==="; echo ""; \
         if command -v agy >/dev/null 2>&1; then \
           echo "Launching agy CLI... Sign in if prompted, then run /usage once to sync limits."; \
           echo ""; \
