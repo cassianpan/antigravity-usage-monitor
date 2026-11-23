@@ -15,6 +15,14 @@ struct MenuBarColumnItem: Identifiable, Equatable {
     let valueHex: UInt32
 }
 
+private struct RefreshPayload: Sendable {
+    let bridgeStatus: BridgeStatus
+    let cliBinaryPath: String?
+    let officialReport: OfficialQuotaReport
+    let localReport: LocalUsageReport
+    let runningProcesses: [RunningProcessInfo]
+}
+
 @MainActor
 @Observable
 final class UsageMonitorStore {
@@ -40,6 +48,8 @@ final class UsageMonitorStore {
     private var timer: Timer?
     private var directoryWatcher: DispatchSourceFileSystemObject?
     private var watchedFD: Int32 = -1
+    private var watcherDebounceTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
     private var lastAutoSyncAttempt: Date = .distantPast
     private var lastSeenTotalTokens: Int = 0
 
@@ -59,50 +69,87 @@ final class UsageMonitorStore {
         startTimer()
         startSnapshotWatcher()
 
-        // Silently fetch official limits on launch without requiring an open Terminal.
         Task { [weak self] in
             await self?.syncOfficialInBackground(force: true)
         }
     }
 
+    /// Non-blocking refresh: all disk I/O, JSONL parsing, aggregation, and pgrep run off the main thread.
     func refreshNow() {
+        refreshTask?.cancel()
         isRefreshing = true
-        let now = Date()
 
-        bridgeStatus = bridgeInstaller.status()
-        cliBinaryPath = SilentCLISyncer.locateAgyBinary()?.path
-        let snapshot = quotaEvaluator.loadSnapshot(from: bridgeInstaller.snapshotURL)
-        let evaluatedOfficial = quotaEvaluator.evaluate(snapshot: snapshot, now: now)
-        officialReport = evaluatedOfficial
+        let index = transcriptIndex
+        let agg = aggregator
+        let evaluator = quotaEvaluator
+        let installer = bridgeInstaller
+        let billingDay = preferences.billingDay > 0 ? preferences.billingDay : nil
 
-        let scan = transcriptIndex.refresh()
-        localReport = aggregator.aggregate(
-            records: scan.records,
-            conversationCount: scan.conversationCount,
-            now: now,
-            officialWeeklyResetTime: evaluatedOfficial.primaryWeekly?.resetTime,
-            billingDay: preferences.billingDay > 0 ? preferences.billingDay : nil
-        )
+        // Capture running GUI apps on main thread (NSWorkspace is fast in-memory),
+        // then run pgrep + file I/O + JSON parsing on a background utility task.
+        let guiApps: [RunningProcessInfo] = NSWorkspace.shared.runningApplications.compactMap { app in
+            guard let name = app.localizedName else { return nil }
+            let lower = name.lowercased()
+            guard lower.contains("antigravity") && !lower.contains("usage monitor") else { return nil }
+            return RunningProcessInfo(id: app.processIdentifier, name: name, kind: "App")
+        }
 
-        let currentTokens = localReport.week.totalTokens
-        let tokensIncreased = currentTokens > lastSeenTotalTokens
-        lastSeenTotalTokens = currentTokens
+        refreshTask = Task { [weak self] in
+            let payload: RefreshPayload = await Task.detached(priority: .utility) {
+                let now = Date()
+                let status = installer.status()
+                let cliPath = SilentCLISyncer.locateAgyBinary()?.path
+                let snapshot = evaluator.loadSnapshot(from: installer.snapshotURL)
+                let official = evaluator.evaluate(snapshot: snapshot, now: now)
+                let scan = index.refresh()
+                let local = agg.aggregate(
+                    records: scan.records,
+                    conversationCount: scan.conversationCount,
+                    now: now,
+                    officialWeeklyResetTime: official.primaryWeekly?.resetTime,
+                    billingDay: billingDay
+                )
+                let cliProcs = Self.detectAgyCLIProcesses()
+                return RefreshPayload(
+                    bridgeStatus: status,
+                    cliBinaryPath: cliPath,
+                    officialReport: official,
+                    localReport: local,
+                    runningProcesses: guiApps + cliProcs
+                )
+            }.value
 
-        runningProcesses = detectRunningProcesses()
+            guard !Task.isCancelled, let self else { return }
 
-        isRefreshing = false
-        onMenuBarUpdate?()
+            let now = Date()
+            self.bridgeStatus = payload.bridgeStatus
+            self.cliBinaryPath = payload.cliBinaryPath
+            self.officialReport = payload.officialReport
+            self.localReport = payload.localReport
+            self.runningProcesses = payload.runningProcesses
 
-        // Auto background official sync when stale (>= 5 min) or after new token activity (>= 2 min).
-        let age = evaluatedOfficial.staleAgeSeconds ?? .infinity
-        let sinceLastAttempt = now.timeIntervalSince(lastAutoSyncAttempt)
-        if !isSyncingOfficial && sinceLastAttempt >= 90 {
-            if !evaluatedOfficial.hasSnapshot || age >= 300 || (tokensIncreased && age >= 120) {
-                Task { [weak self] in
-                    await self?.syncOfficialInBackground(force: false)
+            let currentTokens = payload.localReport.week.totalTokens
+            let tokensIncreased = currentTokens > self.lastSeenTotalTokens
+            self.lastSeenTotalTokens = currentTokens
+
+            self.isRefreshing = false
+            self.onMenuBarUpdate?()
+
+            let age = payload.officialReport.staleAgeSeconds ?? .infinity
+            let sinceLastAttempt = now.timeIntervalSince(self.lastAutoSyncAttempt)
+            if !self.isSyncingOfficial && sinceLastAttempt >= 90 {
+                if !payload.officialReport.hasSnapshot || age >= 300 || (tokensIncreased && age >= 120) {
+                    Task { [weak self] in
+                        await self?.syncOfficialInBackground(force: false)
+                    }
                 }
             }
         }
+    }
+
+    func restartTimer() {
+        timer?.invalidate()
+        startTimer()
     }
 
     func syncOfficialInBackground(force: Bool) async {
@@ -137,13 +184,6 @@ final class UsageMonitorStore {
         }
     }
 
-    func restartTimer() {
-        timer?.invalidate()
-        startTimer()
-    }
-
-    /// Launches Terminal.app solely for one-time `agy` sign-in. Once signed in,
-    /// the user can close Terminal and the app syncs official limits silently in the background.
     func openTerminalToConnectCLI() {
         let terminalCommand = """
         export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; \
@@ -170,19 +210,16 @@ final class UsageMonitorStore {
         end tell
         """
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", appleScript]
-        do {
-            try process.run()
-            bridgeFeedback = preferences.language.isChinese
-                ? "已打开终端启动 agy。完成登录后即可关闭终端，App 会在后台自动刷新官方额度。"
-                : "Opened Terminal with agy. After signing in you can close Terminal — limits sync automatically in the background."
-        } catch {
-            bridgeFeedback = preferences.language.isChinese
-                ? "打开终端失败：\(error.localizedDescription)"
-                : "Failed to open Terminal: \(error.localizedDescription)"
+        Task.detached(priority: .userInitiated) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", appleScript]
+            try? process.run()
         }
+
+        bridgeFeedback = preferences.language.isChinese
+            ? "已打开终端启动 agy。完成登录后即可关闭终端，App 会在后台自动刷新官方额度。"
+            : "Opened Terminal with agy. After signing in you can close Terminal — limits sync automatically in the background."
     }
 
     func uninstallBridge() {
@@ -266,18 +303,8 @@ final class UsageMonitorStore {
         return columns
     }
 
-    private func detectRunningProcesses() -> [RunningProcessInfo] {
+    private nonisolated static func detectAgyCLIProcesses() -> [RunningProcessInfo] {
         var found: [RunningProcessInfo] = []
-        let apps = NSWorkspace.shared.runningApplications
-        for app in apps {
-            guard let name = app.localizedName else { continue }
-            let lower = name.lowercased()
-            if lower.contains("antigravity") && !lower.contains("usage monitor") {
-                found.append(RunningProcessInfo(id: app.processIdentifier, name: name, kind: "App"))
-            }
-        }
-
-        // Also detect running `agy` CLI processes cleanly via pgrep.
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
         proc.arguments = ["-x", "agy"]
@@ -295,7 +322,6 @@ final class UsageMonitorStore {
                 }
             }
         }
-
         return found
     }
 
@@ -330,7 +356,13 @@ final class UsageMonitorStore {
         )
         source.setEventHandler { [weak self] in
             Task { @MainActor in
-                self?.refreshNow()
+                guard let self else { return }
+                self.watcherDebounceTask?.cancel()
+                self.watcherDebounceTask = Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(300))
+                    guard !Task.isCancelled else { return }
+                    self?.refreshNow()
+                }
             }
         }
         source.resume()

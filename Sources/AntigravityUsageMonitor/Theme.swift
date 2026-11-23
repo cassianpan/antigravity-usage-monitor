@@ -485,9 +485,13 @@ struct SparklineView: View {
                     guard values.count >= 2 else { return }
                     let ratio = max(0, min(1, loc.x / max(1, w)))
                     let idx = Int(round(ratio * Double(values.count - 1)))
-                    onHoverIndex(idx)
+                    if idx != hoveredIndex {
+                        onHoverIndex(idx)
+                    }
                 case .ended:
-                    onHoverIndex(nil)
+                    if hoveredIndex != nil {
+                        onHoverIndex(nil)
+                    }
                 }
             }
             .onTapGesture {
@@ -565,9 +569,13 @@ struct SpeedDotChartView: View {
                             bestId = sample.id
                         }
                     }
-                    onHoverSample(bestId)
+                    if bestId != hoveredSampleId {
+                        onHoverSample(bestId)
+                    }
                 case .ended:
-                    onHoverSample(nil)
+                    if hoveredSampleId != nil {
+                        onHoverSample(nil)
+                    }
                 }
             }
             .onTapGesture {
@@ -577,6 +585,81 @@ struct SpeedDotChartView: View {
         .frame(height: 62)
         .padding(.horizontal, 4)
         .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+}
+
+@MainActor
+enum CachedFormatters {
+    static let hhmm: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    static let zhPeriodDateTime: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日 HH:mm:ss"
+        return f
+    }()
+
+    static let enPeriodDateTime: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "MMM d, HH:mm:ss"
+        return f
+    }()
+
+    static let zhDay: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日"
+        return f
+    }()
+
+    static let enDay: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "MMM d"
+        return f
+    }()
+}
+
+/// Unified zero-lag segmented switch with full-area hit targets and smooth transitions.
+struct SegmentSwitch<Option: Hashable & Identifiable>: View {
+    let options: [Option]
+    let selection: Option
+    let label: (Option) -> String
+    var fullWidth: Bool = false
+    let onSelect: (Option) -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options) { option in
+                let active = selection == option
+                Button {
+                    guard selection != option else { return }
+                    withAnimation(.easeOut(duration: 0.14)) {
+                        onSelect(option)
+                    }
+                } label: {
+                    Text(label(option))
+                        .font(.system(size: fullWidth ? 11.5 : 11, weight: active ? .medium : .regular))
+                        .foregroundStyle(active ? Palette.text : Palette.secondary)
+                        .frame(maxWidth: fullWidth ? .infinity : nil)
+                        .padding(.horizontal, fullWidth ? 6 : 10)
+                        .padding(.vertical, fullWidth ? 5 : 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: fullWidth ? 6 : 5, style: .continuous)
+                                .fill(active ? Palette.controlSelected : Color.clear)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: fullWidth ? 8 : 7, style: .continuous))
     }
 }
 

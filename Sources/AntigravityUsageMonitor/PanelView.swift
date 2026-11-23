@@ -354,11 +354,7 @@ struct PanelView: View {
                         guard let id = interaction.hoveredDotSampleId else { return nil }
                         return speed.samples.first(where: { $0.id == id })
                     }()
-                    let timeFmt: DateFormatter = {
-                        let f = DateFormatter()
-                        f.dateFormat = "HH:mm"
-                        return f
-                    }()
+                    let timeFmt = CachedFormatters.hhmm
 
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(alignment: .center) {
@@ -533,13 +529,11 @@ struct PanelView: View {
         }()
 
         let periodHeaderText: String = {
-            let fmt = DateFormatter()
-            fmt.locale = Locale(identifier: l10n.zh ? "zh_CN" : "en_US_POSIX")
             if let period = activePeriod {
-                fmt.dateFormat = l10n.zh ? "M月d日 HH:mm:ss" : "MMM d, HH:mm:ss"
+                let fmt = l10n.zh ? CachedFormatters.zhPeriodDateTime : CachedFormatters.enPeriodDateTime
                 return "\(fmt.string(from: period.start)) – \(fmt.string(from: period.end))"
             } else {
-                fmt.dateFormat = l10n.zh ? "M月d日" : "MMM d"
+                let fmt = l10n.zh ? CachedFormatters.zhDay : CachedFormatters.enDay
                 return fmt.string(from: store.localReport.updatedAt)
             }
         }()

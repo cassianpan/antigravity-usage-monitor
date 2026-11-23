@@ -59,7 +59,10 @@ struct SettingsView: View {
     private func tabButton(_ tab: SettingsTab, icon: String, title: String) -> some View {
         let active = preferences.selectedSettingsTab == tab
         return Button {
-            preferences.selectedSettingsTab = tab
+            guard preferences.selectedSettingsTab != tab else { return }
+            withAnimation(.easeOut(duration: 0.14)) {
+                preferences.selectedSettingsTab = tab
+            }
         } label: {
             VStack(spacing: 4) {
                 Image(systemName: icon)
@@ -229,7 +232,7 @@ struct SettingsView: View {
             Hairline()
             densityRow(title: l10n.limits, selection: $preferences.quotaSectionDensity, zh: zh)
             Hairline()
-            densityRow(title: l10n.context, selection: $preferences.contextSectionDensity, zh: zh)
+            densityRow(title: zh ? "输出速度" : "Output speed", selection: $preferences.contextSectionDensity, zh: zh)
             Hairline()
             densityRow(title: l10n.spend, selection: $preferences.spendSectionDensity, zh: zh)
         }
@@ -241,27 +244,12 @@ struct SettingsView: View {
                 .font(.system(size: 12.5))
                 .foregroundStyle(Palette.text)
             Spacer()
-            HStack(spacing: 2) {
-                ForEach(SectionDensity.allCases) { mode in
-                    let active = selection.wrappedValue == mode
-                    Button {
-                        selection.wrappedValue = mode
-                    } label: {
-                        Text(mode.label(zh: zh))
-                            .font(.system(size: 11, weight: active ? .medium : .regular))
-                            .foregroundStyle(active ? Palette.text : Palette.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(
-                                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                    .fill(active ? Palette.controlSelected : Color.clear)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(2)
-            .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            SegmentSwitch(
+                options: SectionDensity.allCases,
+                selection: selection.wrappedValue,
+                label: { $0.label(zh: zh) },
+                onSelect: { selection.wrappedValue = $0 }
+            )
         }
     }
 
@@ -365,27 +353,12 @@ struct SettingsView: View {
                     .font(.system(size: 12.5))
                     .foregroundStyle(Palette.text)
                 Spacer()
-                HStack(spacing: 2) {
-                    ForEach(AppLanguage.allCases) { lang in
-                        let active = preferences.language == lang
-                        Button {
-                            preferences.language = lang
-                        } label: {
-                            Text(lang.label(isChinese: zh))
-                                .font(.system(size: 11, weight: active ? .medium : .regular))
-                                .foregroundStyle(active ? Palette.text : Palette.secondary)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                        .fill(active ? Palette.controlSelected : Color.clear)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(2)
-                .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                SegmentSwitch(
+                    options: AppLanguage.allCases,
+                    selection: preferences.language,
+                    label: { $0.label(isChinese: zh) },
+                    onSelect: { preferences.language = $0 }
+                )
             }
 
             Hairline()
