@@ -98,13 +98,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openPanel() {
-        store.refreshNow()
         interaction.resetHovers()
         tipCenter.setActive(true)
+        store.refreshNow()
         positionPanelUnderStatusItem()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         installDismissMonitors()
+        interaction.triggerRefreshSpin()
     }
 
     private func closePanel() {

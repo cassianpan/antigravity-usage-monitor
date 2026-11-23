@@ -327,6 +327,7 @@ struct FooterActionButton: View {
     let systemImage: String
     let title: String
     let shortcut: String
+    var extraTipRows: [Tip.Row] = []
     var tipAlignment: TipHorizontalAlignment = .center
     var rotation: Double = 0
     let interaction: PanelInteractionState
@@ -364,7 +365,9 @@ struct FooterActionButton: View {
             }
         }
         .panelTip("footer.\(id)", center: tipCenter, alignment: tipAlignment) {
-            Tip(rows: [Tip.Row(isChinese ? "快捷键" : "Shortcut", shortcut)])
+            var rows = extraTipRows
+            rows.append(Tip.Row(isChinese ? "快捷键" : "Shortcut", shortcut))
+            return Tip(rows: rows)
         }
     }
 }

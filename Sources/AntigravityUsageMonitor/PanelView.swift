@@ -65,6 +65,13 @@ struct PanelView: View {
 
             if let tier = store.officialReport.planTier, !tier.isEmpty {
                 PlanTagView(rawTier: tier)
+                    .panelTip("header.plan", center: tipCenter, alignment: .trailing) {
+                        var rows = [Tip.Row(l10n.zh ? "订阅方案" : "Plan", tier)]
+                        if let email = store.officialReport.email, !email.isEmpty {
+                            rows.append(Tip.Row(l10n.zh ? "账号" : "Account", email))
+                        }
+                        return Tip(rows: rows)
+                    }
             }
         }
         .padding(.horizontal, Metrics.padding)
@@ -410,16 +417,36 @@ struct PanelView: View {
                         Text(UsageFormatter.currency(summary.estimatedCostUSD))
                             .font(.system(size: 25, weight: .semibold, design: .monospaced))
                             .foregroundStyle(Palette.text)
+                            .panelTip("spend.cost", center: tipCenter, alignment: .leading) {
+                                Tip(
+                                    title: l10n.zh ? "API 等价花费估算" : "API-equivalent spend estimate",
+                                    note: l10n.zh
+                                        ? "按各模型公开 API 单价折算本机历史会话消耗，并非订阅实际扣费。"
+                                        : "Estimated from published API list prices for local sessions, not your subscription bill."
+                                )
+                            }
 
                         if summary.hasUnpricedModels {
                             Text(l10n.unpricedBadge)
                                 .font(.system(size: 10))
                                 .foregroundStyle(Palette.warning)
-                                .help(summary.unpricedModels.joined(separator: ", "))
+                                .panelTip("spend.unpriced", center: tipCenter, alignment: .leading) {
+                                    Tip(
+                                        title: l10n.zh ? "未收录单价的模型" : "Unpriced models",
+                                        note: summary.unpricedModels.joined(separator: ", ")
+                                    )
+                                }
                         } else if summary.cacheSavingsUSD > 0 {
                             Text("\(l10n.savedPrefix)\(UsageFormatter.currency(summary.cacheSavingsUSD))")
                                 .font(.system(size: 10.5, design: .monospaced))
                                 .foregroundStyle(Palette.tertiary)
+                                .panelTip("spend.saved.sub", center: tipCenter, alignment: .leading) {
+                                    Tip(
+                                        l10n.zh
+                                            ? "如果没有 Prompt Caching，这些命中缓存的 token 需要按原价计费。"
+                                            : "Without prompt caching, these cached tokens would be billed at full input price."
+                                    )
+                                }
                         }
                     }
 
@@ -439,17 +466,65 @@ struct PanelView: View {
                 // Compact summary row: Tokens · Requests · Today
                 HStack {
                     inlineStat(label: l10n.tokens, value: UsageFormatter.compactTokens(summary.totalTokens))
+                        .panelTip("spend.tokens", center: tipCenter, alignment: .leading) {
+                            Tip(
+                                title: l10n.zh ? "总 Token 构成" : "Total tokens",
+                                rows: [
+                                    Tip.Row(l10n.input, "\(summary.uncachedInputTokens)", dot: Palette.input),
+                                    Tip.Row(l10n.output, "\(summary.outputTokens)", dot: Palette.output),
+                                    Tip.Row(l10n.cacheRead, "\(summary.cacheReadTokens)", dot: Palette.cacheRead),
+                                ]
+                            )
+                        }
                     Spacer()
                     inlineStat(label: l10n.requests, value: "\(summary.requestCount)")
+                        .panelTip("spend.requests", center: tipCenter, alignment: .center) {
+                            Tip(
+                                l10n.zh
+                                    ? "当前周期内本机记录到的模型响应总次数（含桌面端与 agy CLI）。"
+                                    : "Total recorded model responses on this Mac in the selected period."
+                            )
+                        }
                     Spacer()
                     inlineStat(label: l10n.todayShort, value: UsageFormatter.currency(store.localReport.today.estimatedCostUSD))
+                        .panelTip("spend.today", center: tipCenter, alignment: .trailing) {
+                            Tip(
+                                title: l10n.zh ? "今日消耗" : "Today's spend",
+                                rows: [
+                                    Tip.Row("Tokens", UsageFormatter.compactTokens(store.localReport.today.totalTokens)),
+                                    Tip.Row(l10n.requests, "\(store.localReport.today.requestCount)"),
+                                    Tip.Row(l10n.cacheHitRate, UsageFormatter.percentageOneDecimal(store.localReport.today.cacheHitRate)),
+                                ]
+                            )
+                        }
                 }
 
                 // Token breakdown columns with colored dots
                 HStack(spacing: 0) {
                     tokenDotColumn(dot: Palette.input, label: l10n.input, value: UsageFormatter.compactTokens(summary.uncachedInputTokens))
+                        .panelTip("spend.input", center: tipCenter, alignment: .leading) {
+                            Tip(
+                                l10n.zh
+                                    ? "未命中缓存、新发送给模型的输入 token。"
+                                    : "Uncached input tokens sent fresh to the model."
+                            )
+                        }
                     tokenDotColumn(dot: Palette.output, label: l10n.output, value: UsageFormatter.compactTokens(summary.outputTokens))
+                        .panelTip("spend.output", center: tipCenter, alignment: .center) {
+                            Tip(
+                                l10n.zh
+                                    ? "模型生成的回复 token（包含内部思考推理 token）。"
+                                    : "Output tokens generated by the model (including thinking tokens)."
+                            )
+                        }
                     tokenDotColumn(dot: Palette.cacheRead, label: l10n.cacheRead, value: UsageFormatter.compactTokens(summary.cacheReadTokens))
+                        .panelTip("spend.cacheRead", center: tipCenter, alignment: .trailing) {
+                            Tip(
+                                l10n.zh
+                                    ? "直接复用上下文缓存的输入 token，按低价折扣计费。"
+                                    : "Input tokens served from prompt cache at discounted read rates."
+                            )
+                        }
                 }
 
                 // Cache hit rate bar
@@ -463,6 +538,13 @@ struct PanelView: View {
                             Text("\(l10n.savedPrefix)\(UsageFormatter.currency(summary.cacheSavingsUSD))")
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundStyle(Palette.tertiary)
+                                .panelTip("spend.saved.bar", center: tipCenter, alignment: .trailing) {
+                                    Tip(
+                                        l10n.zh
+                                            ? "如果没有 Prompt Caching，这些命中缓存的 token 需要按原价计费。"
+                                            : "Without prompt caching, these tokens would be billed at full input price."
+                                    )
+                                }
                         }
                         Text(summary.totalInputTokens > 0 ? UsageFormatter.percentageOneDecimal(summary.cacheHitRate) : "--")
                             .font(.system(size: 12, weight: .semibold, design: .monospaced))
@@ -473,6 +555,19 @@ struct PanelView: View {
                         fraction: summary.cacheHitRate,
                         color: Color.white.opacity(0.45),
                         height: 3.5
+                    )
+                }
+                .contentShape(Rectangle())
+                .panelTip("spend.cacheRate", center: tipCenter, alignment: .center) {
+                    Tip(
+                        title: l10n.cacheHitRate,
+                        rows: [
+                            Tip.Row(l10n.cacheRead, UsageFormatter.compactTokens(summary.cacheReadTokens), dot: Palette.cacheRead),
+                            Tip.Row(l10n.input, UsageFormatter.compactTokens(summary.uncachedInputTokens), dot: Palette.input),
+                        ],
+                        note: l10n.zh
+                            ? "缓存命中 token 占全部输入 token（新增输入 + 缓存命中）的比例。"
+                            : "Share of all input tokens served from prompt cache."
                     )
                 }
 
@@ -502,6 +597,20 @@ struct PanelView: View {
                                         .foregroundStyle(Palette.warning)
                                         .frame(minWidth: 54, alignment: .trailing)
                                 }
+                            }
+                            .contentShape(Rectangle())
+                            .panelTip("model.\(model.id)", center: tipCenter, alignment: .center) {
+                                var rows: [Tip.Row] = [
+                                    Tip.Row(l10n.input, UsageFormatter.compactTokens(model.uncachedInputTokens), dot: Palette.input),
+                                    Tip.Row(l10n.output, UsageFormatter.compactTokens(model.outputTokens), dot: Palette.output),
+                                    Tip.Row(l10n.cacheRead, UsageFormatter.compactTokens(model.cacheReadTokens), dot: Palette.cacheRead),
+                                    Tip.Row(l10n.cacheHitRate, UsageFormatter.percentageOneDecimal(model.cacheHitRate), separated: true),
+                                    Tip.Row(l10n.requests, "\(model.requestCount)"),
+                                ]
+                                if let saved = model.cacheSavingsUSD, saved > 0 {
+                                    rows.append(Tip.Row(l10n.zh ? "缓存节省" : "Cache saved", UsageFormatter.currency(saved), color: Palette.safeGreen))
+                                }
+                                return Tip(title: model.displayName, rows: rows)
                             }
                         }
                     }
@@ -571,11 +680,21 @@ struct PanelView: View {
                 )
             }
 
+            let lastSyncText: String = {
+                if let age = store.officialReport.staleAgeSeconds {
+                    return UsageFormatter.relativeAge(age)
+                }
+                return UsageFormatter.relativeAge(max(0, Date().timeIntervalSince(store.localReport.updatedAt)))
+            }()
+
             FooterActionButton(
                 id: "refresh",
                 systemImage: "arrow.clockwise",
                 title: l10n.refresh,
                 shortcut: "⌘R",
+                extraTipRows: [
+                    Tip.Row(l10n.zh ? "上次同步" : "Last synced", lastSyncText),
+                ],
                 tipAlignment: .center,
                 rotation: interaction.refreshSpinDegrees,
                 interaction: interaction,
