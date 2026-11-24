@@ -9,7 +9,7 @@
 通过官方 `agy` CLI 获取 5 小时 / 每周配额与安全线，结合本地对话日志统计缓存命中率、模型分布与 API 等效费用。<br>
 纯 Swift 6 原生实现，零第三方依赖，零抓包。
 
-[![Release](https://img.shields.io/github/v/release/panmingxuan/antigravity-usage-monitor?style=flat-square&color=4F7BFF&label=release)](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest)
+[![Release](https://img.shields.io/github/v/release/cassianpan/antigravity-usage-monitor?style=flat-square&color=4F7BFF&label=release)](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-2b2b2b?style=flat-square&logo=apple&logoColor=white)](#安装方式)
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white)](Package.swift)
 [![License: MIT](https://img.shields.io/badge/license-MIT-4a4a4a?style=flat-square)](LICENSE)
@@ -84,6 +84,8 @@
 
 ## 安装方式
 
+> **Windows 用户？** 本项目为 macOS 原生版本（Swift 6）。如果你在寻找 Windows 版本，请前往另一位开发者 [@imhu](https://github.com/imhu) 维护的独立项目 [**cc-usage-monitor**](https://github.com/imhu/cc-usage-monitor)（支持 Windows 下的 Antigravity 与 Claude 用量监控）。
+
 ### 方式一：Homebrew Cask（推荐，装完直接打开免弹窗）
 
 ```bash
@@ -151,7 +153,8 @@ codesign --force --deep --sign "<你的证书名称>" "/Applications/Antigravity
 
 ## 致谢
 
-本项目深受 [@kittors](https://github.com/kittors) 开源的 [**claude-usage-monitor**](https://github.com/kittors/claude-usage-monitor) 启发。无论是菜单栏信息密度、配额安全线设计、深色毛玻璃面板质感，还是对 macOS 原生体验的打磨，都参考并致敬了原项目的优秀理念。非常感谢原作者的开源分享！
+- [**claude-usage-monitor**](https://github.com/kittors/claude-usage-monitor)（[@kittors](https://github.com/kittors)）：本项目深受其启发，无论是菜单栏信息密度、配额安全线设计、深色毛玻璃面板质感，还是对 macOS 原生体验的打磨，都参考并致敬了原项目的优秀理念。非常感谢原作者的开源分享！
+- [**cc-usage-monitor**](https://github.com/imhu/cc-usage-monitor)（[@imhu](https://github.com/imhu)）：由另一位开发者独立构建并维护的 Windows 版本（支持 Antigravity 与 Claude 用量监控），感谢为 Windows 生态带来的精彩实现！
 
 ## 开源协议
 

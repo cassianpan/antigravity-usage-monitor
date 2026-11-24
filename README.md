@@ -9,7 +9,7 @@
 Official 5-hour and weekly quota from the `agy` CLI, paired with local transcript analytics<br>
 for cache hit rate, model split, and API-equivalent spend. Native Swift 6, zero dependencies, zero packet capture.
 
-[![Release](https://img.shields.io/github/v/release/panmingxuan/antigravity-usage-monitor?style=flat-square&color=4F7BFF&label=release)](https://github.com/panmingxuan/antigravity-usage-monitor/releases/latest)
+[![Release](https://img.shields.io/github/v/release/cassianpan/antigravity-usage-monitor?style=flat-square&color=4F7BFF&label=release)](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-2b2b2b?style=flat-square&logo=apple&logoColor=white)](#install)
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white)](Package.swift)
 [![License: MIT](https://img.shields.io/badge/license-MIT-4a4a4a?style=flat-square)](LICENSE)
@@ -84,6 +84,8 @@ Built with pure Swift 6 + SwiftUI + AppKit for macOS 15+ (Apple Silicon). Zero t
 
 ## Install
 
+> **Using Windows?** This project is macOS-only (native Swift 6). For a Windows version, check out [**cc-usage-monitor**](https://github.com/imhu/cc-usage-monitor) by [@imhu](https://github.com/imhu) — a separate project providing Antigravity and Claude usage monitoring for Windows.
+
 ### Option 1: Homebrew Cask (Recommended — No Gatekeeper Prompt)
 
 ```bash
@@ -151,7 +153,8 @@ The repository is intentionally split into two clean layers:
 
 ## Credits & Acknowledgements
 
-This project is deeply inspired by [**claude-usage-monitor**](https://github.com/kittors/claude-usage-monitor) by [@kittors](https://github.com/kittors). The menu bar density, safe-pace line concept, frosted glass panel aesthetics, and attention to native macOS craft all draw directly from its design. Thank you for open-sourcing such a thoughtful tool!
+- [**claude-usage-monitor**](https://github.com/kittors/claude-usage-monitor) by [@kittors](https://github.com/kittors) — This project is deeply inspired by its menu bar density, safe-pace line concept, frosted glass panel aesthetics, and attention to native macOS craft. Thank you for open-sourcing such a thoughtful tool!
+- [**cc-usage-monitor**](https://github.com/imhu/cc-usage-monitor) by [@imhu](https://github.com/imhu) — Built and maintained independently for Windows users (supporting both Antigravity and Claude usage monitoring). Thank you for bringing the experience to Windows!
 
 ## License
 
