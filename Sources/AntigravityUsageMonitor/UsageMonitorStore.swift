@@ -644,46 +644,47 @@ final class UsageMonitorStore {
         let rootPID = proc.id
         let knownMembers = proc.memberPIDs
 
-        Task.detached(priority: .userInitiated) { [weak self] in
-            // 1) Re-sample live subtree so we don't miss freshly spawned helpers or kill stale PIDs.
-            let liveSubtree = Self.collectLiveSubtreePIDs(rootPID: rootPID, seedMembers: knownMembers)
-            let stampedTargets: [(pid: Int32, startSec: UInt64, startUsec: UInt64)] = liveSubtree.compactMap { pid in
-                guard let stamp = Self.processStartStamp(pid) else { return nil }
-                return (pid: pid, startSec: stamp.sec, startUsec: stamp.usec)
-            }
-
-            // 2) Graceful terminate first (NSRunningApplication for desktop app, SIGTERM for CLI).
-            if isDesktopApp {
-                _ = await MainActor.run {
-                    NSRunningApplication(processIdentifier: rootPID)?.terminate()
+        Task { [weak self] in
+            await Task.detached(priority: .userInitiated) {
+                // 1) Re-sample live subtree so we don't miss freshly spawned helpers or kill stale PIDs.
+                let liveSubtree = Self.collectLiveSubtreePIDs(rootPID: rootPID, seedMembers: knownMembers)
+                let stampedTargets: [(pid: Int32, startSec: UInt64, startUsec: UInt64)] = liveSubtree.compactMap { pid in
+                    guard let stamp = Self.processStartStamp(pid) else { return nil }
+                    return (pid: pid, startSec: stamp.sec, startUsec: stamp.usec)
                 }
-            } else {
-                _ = kill(rootPID, SIGTERM)
-            }
 
-            let waitBudget: TimeInterval = isDesktopApp ? 1.2 : 0.3
-            let deadline = Date().addingTimeInterval(waitBudget)
-            while Date() < deadline {
-                let anyAlive = stampedTargets.contains { target in
-                    Self.isSameProcessAlive(pid: target.pid, startSec: target.startSec, startUsec: target.startUsec)
+                // 2) Graceful terminate first (NSRunningApplication for desktop app, SIGTERM for CLI).
+                if isDesktopApp {
+                    _ = await MainActor.run {
+                        NSRunningApplication(processIdentifier: rootPID)?.terminate()
+                    }
+                } else {
+                    _ = kill(rootPID, SIGTERM)
                 }
-                if !anyAlive { break }
-                try? await Task.sleep(for: .milliseconds(50))
-            }
 
-            // 3) Force-kill remaining subtree members only if start timestamp still matches (PID-reuse safe).
-            for target in stampedTargets {
-                if Self.isSameProcessAlive(pid: target.pid, startSec: target.startSec, startUsec: target.startUsec) {
-                    _ = kill(target.pid, SIGKILL)
+                let waitBudget: TimeInterval = isDesktopApp ? 1.2 : 0.3
+                let deadline = Date().addingTimeInterval(waitBudget)
+                while Date() < deadline {
+                    let anyAlive = stampedTargets.contains { target in
+                        Self.isSameProcessAlive(pid: target.pid, startSec: target.startSec, startUsec: target.startUsec)
+                    }
+                    if !anyAlive { break }
+                    try? await Task.sleep(for: .milliseconds(50))
                 }
-            }
 
-            try? await Task.sleep(for: .milliseconds(120))
-            await MainActor.run {
-                guard let self else { return }
-                self.terminatingProcessIds.remove(rootPID)
-                self.refreshNow()
-            }
+                // 3) Force-kill remaining subtree members only if start timestamp still matches (PID-reuse safe).
+                for target in stampedTargets {
+                    if Self.isSameProcessAlive(pid: target.pid, startSec: target.startSec, startUsec: target.startUsec) {
+                        _ = kill(target.pid, SIGKILL)
+                    }
+                }
+
+                try? await Task.sleep(for: .milliseconds(120))
+            }.value
+
+            guard let self else { return }
+            self.terminatingProcessIds.remove(rootPID)
+            self.refreshNow()
         }
     }
 
