@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-24
+
+### Changed
+
+- **Rendered Markdown release notes with collapsible view**: Replaced raw Markdown text in **Settings › General › Software updates** with a native `AttributedString` + `MarkdownNotesView` renderer (headings, bullet lists, bold, inline code) that automatically shows only the current language's changelog section and strips trailing install boilerplate. Notes stay collapsed by default and expand/collapse when clicking the update status line (or auto-expand when opened from the panel's update pill).
+- **Cleaner update actions & faster auto-check**: Removed redundant `GitHub` and `brew` buttons from the update row (keeping an unobtrusive **Open in browser** link inside expanded notes) and shortened background auto-check cadence to every 4 hours.
+
 ## [0.1.5] - 2026-11-24
 
 ### Fixed

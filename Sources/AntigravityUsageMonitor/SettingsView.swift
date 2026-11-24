@@ -536,20 +536,101 @@ struct SettingsView: View {
             Hairline()
 
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(zh ? "软件更新" : "Software updates")
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(zh ? "软件更新" : "App update")
                             .font(.system(size: 12.5))
                             .foregroundStyle(Palette.text)
-                        Text(zh ? "当前版本 v\(store.currentAppVersion) · 每 12 小时自动检查 GitHub 新版本" : "Current v\(store.currentAppVersion) · Auto-check GitHub Releases every 12h")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Palette.tertiary)
+
+                        let statusLabel: String = {
+                            if let status = store.updateStatusText, !status.isEmpty {
+                                return status
+                            }
+                            return zh ? "当前版本 v\(store.currentAppVersion)" : "Current v\(store.currentAppVersion)"
+                        }()
+
+                        if store.availableUpdate != nil {
+                            Button {
+                                withAnimation(.easeOut(duration: 0.16)) {
+                                    store.toggleUpdateNotes()
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(statusLabel)
+                                        .underline(store.isUpdateStatusHovered || store.updateNotesVisible)
+                                    Image(systemName: store.updateNotesVisible ? "chevron.up" : "chevron.down")
+                                        .font(.system(size: 8.5, weight: .semibold))
+                                }
+                                .font(.system(size: 11))
+                                .foregroundStyle(
+                                    store.isUpdateStatusHovered || store.updateNotesVisible
+                                        ? Palette.accent
+                                        : Palette.accent.opacity(0.88)
+                                )
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .onHover { store.isUpdateStatusHovered = $0 }
+                            .help(zh ? "点击展开或收起更新说明" : "Click to show or hide release notes")
+                        } else {
+                            Text(statusLabel)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Palette.tertiary)
+                        }
                     }
-                    Spacer()
-                    Toggle("", isOn: $preferences.autoCheckUpdates)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .tint(Palette.accent)
+
+                    Spacer(minLength: 10)
+
+                    if let update = store.availableUpdate {
+                        HStack(spacing: 8) {
+                            if !store.isUpdateDismissed && !store.updatePhase.isBusy {
+                                Button {
+                                    store.dismissAvailableUpdate()
+                                } label: {
+                                    Text(zh ? "忽略" : "Skip")
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .foregroundStyle(Palette.secondary)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                                .help(zh ? "仅忽略当前版本，下个新版本发布时会再次提醒" : "Skips only this version; a newer release will notify again")
+                            }
+
+                            Button {
+                                Task { await store.installAvailableUpdate() }
+                            } label: {
+                                Text(store.updatePhase.isBusy
+                                     ? (zh ? "更新中…" : "Updating…")
+                                     : (zh ? "立即更新到 v\(update.version)" : "Update to v\(update.version)"))
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                    .foregroundStyle(Color(hex: 0x0A1930))
+                                    .padding(.horizontal, 11)
+                                    .padding(.vertical, 5)
+                                    .background(Palette.accent, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!store.canInstallUpdateInPlace)
+                        }
+                    } else if store.updateDownloadFraction == nil {
+                        Button {
+                            Task { await store.checkForUpdates(manual: true) }
+                        } label: {
+                            Text(store.isCheckingUpdates ? (zh ? "检查中…" : "Checking…") : (zh ? "检查更新" : "Check"))
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(Palette.text)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.75)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(store.updatePhase.isBusy)
+                    }
                 }
 
                 if let fraction = store.updateDownloadFraction {
@@ -566,104 +647,56 @@ struct SettingsView: View {
                     }
                 }
 
-                HStack(spacing: 8) {
-                    if let update = store.availableUpdate {
-                        Button {
-                            Task { await store.installAvailableUpdate() }
-                        } label: {
-                            Text(store.updatePhase.isBusy
-                                 ? (zh ? "更新中…" : "Updating…")
-                                 : (zh ? "立即更新到 v\(update.version)" : "Update to v\(update.version)"))
+                if store.updateNotesVisible, let update = store.availableUpdate {
+                    let renderedBody = MarkdownBlocks.extractLocalizedReleaseNotes(
+                        update.releaseNotes,
+                        preferChinese: zh
+                    )
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(zh ? "版本 v\(update.version) 更新说明" : "Version v\(update.version) notes")
                                 .font(.system(size: 11.5, weight: .semibold))
-                                .foregroundStyle(Color(hex: 0x0A1930))
-                                .padding(.horizontal, 11)
-                                .padding(.vertical, 5)
-                                .background(Palette.accent, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!store.canInstallUpdateInPlace)
-
-                        if !store.isUpdateDismissed && !store.updatePhase.isBusy {
+                                .foregroundStyle(Palette.text)
+                            Spacer()
                             Button {
-                                store.dismissAvailableUpdate()
+                                store.openUpdateReleasePage()
                             } label: {
-                                Text(zh ? "忽略此版本" : "Skip")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(Palette.secondary)
-                                    .padding(.horizontal, 9)
-                                    .padding(.vertical, 5)
-                                    .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                HStack(spacing: 3) {
+                                    Text(zh ? "在浏览器中打开" : "Open in browser")
+                                    Image(systemName: "arrow.up.right")
+                                        .font(.system(size: 9, weight: .semibold))
+                                }
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(store.isUpdateBrowserLinkHovered ? Palette.accent : Palette.tertiary)
                             }
                             .buttonStyle(.plain)
+                            .onHover { store.isUpdateBrowserLinkHovered = $0 }
                         }
 
-                        Button {
-                            store.openUpdateReleasePage()
-                        } label: {
-                            Text("GitHub")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(Palette.secondary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        ScrollView(.vertical, showsIndicators: false) {
+                            MarkdownNotesView(markdown: renderedBody.isEmpty ? update.releaseNotes : renderedBody)
+                                .padding(.vertical, 2)
                         }
-                        .buttonStyle(.plain)
-
-                        Button {
-                            store.copyBrewUpgradeCommand()
-                        } label: {
-                            Text(store.copiedBrewUpgrade ? (zh ? "已复制" : "Copied") : "brew")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Palette.secondary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 5)
-                                .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Button {
-                            Task { await store.checkForUpdates(manual: true) }
-                        } label: {
-                            Text(store.isCheckingUpdates ? (zh ? "检查中…" : "Checking…") : (zh ? "检查更新" : "Check now"))
-                                .font(.system(size: 11.5, weight: .medium))
-                                .foregroundStyle(Palette.text)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.75)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(store.updatePhase.isBusy)
+                        .frame(maxHeight: 150)
                     }
-
-                    Spacer()
-
-                    if let status = store.updateStatusText {
-                        Text(status)
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(store.availableUpdate != nil ? Palette.accent : Palette.tertiary)
-                            .lineLimit(1)
-                    }
-                }
-
-                if let update = store.availableUpdate, !update.releaseNotes.isEmpty {
-                    ScrollView(.vertical, showsIndicators: true) {
-                        Text(update.releaseNotes)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Palette.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                            .padding(10)
-                    }
-                    .frame(maxHeight: 130)
+                    .padding(12)
                     .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.75)
                     )
+                }
+
+                HStack {
+                    Text(zh ? "每 4 小时自动检查新版本并推送提醒" : "Check for new releases automatically every 4h")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Palette.tertiary)
+                    Spacer()
+                    Toggle("", isOn: $preferences.autoCheckUpdates)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .tint(Palette.accent)
                 }
             }
         }

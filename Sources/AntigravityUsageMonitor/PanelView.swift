@@ -78,6 +78,7 @@ struct PanelView: View {
             if let update = store.visibleAvailableUpdate {
                 Button {
                     preferences.selectedSettingsTab = .general
+                    store.showUpdateNotes()
                     onOpenSettings()
                 } label: {
                     HStack(spacing: 3) {

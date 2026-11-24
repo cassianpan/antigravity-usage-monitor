@@ -71,6 +71,9 @@ final class UsageMonitorStore {
     var updatePhase: UpdateInstallPhase = .idle
     var isCheckingUpdates: Bool = false
     var updateStatusText: String? = nil
+    var updateNotesVisible: Bool = false
+    var isUpdateStatusHovered: Bool = false
+    var isUpdateBrowserLinkHovered: Bool = false
     var copiedBrewUpgrade: Bool = false
 
     var visibleAvailableUpdate: AppUpdateInfo? {
@@ -149,8 +152,21 @@ final class UsageMonitorStore {
 
     func checkForUpdatesIfNeeded() async {
         guard preferences.autoCheckUpdates else { return }
-        guard Date().timeIntervalSince(lastUpdateCheckAt) >= 12 * 3600 else { return }
+        guard Date().timeIntervalSince(lastUpdateCheckAt) >= 4 * 3600 else { return }
         await checkForUpdates(manual: false)
+    }
+
+    func toggleUpdateNotes() {
+        updateNotesVisible.toggle()
+        if updateNotesVisible && availableUpdate == nil && !updatePhase.isBusy {
+            Task { [weak self] in
+                await self?.checkForUpdates(manual: true)
+            }
+        }
+    }
+
+    func showUpdateNotes() {
+        updateNotesVisible = true
     }
 
     func checkForUpdates(manual: Bool) async {
