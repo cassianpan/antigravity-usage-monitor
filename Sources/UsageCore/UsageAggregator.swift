@@ -49,6 +49,8 @@ public struct UsageAggregator: Sendable {
         let fiveHourSummary = summarize(fiveHourRecords)
         let weekSummary = summarize(weekRecords)
         let monthSummary = summarize(monthRecords)
+        let allTimeSummary = summarize(records)
+        let earliestDate = records.map(\.timestamp).min()
         let byModel = summarizeByModel(weekRecords)
         let dailyTrend = buildDailyTrend(records: records, now: now, days: 14)
         let outputSpeed = estimateOutputSpeed(records: records, now: now)
@@ -58,6 +60,8 @@ public struct UsageAggregator: Sendable {
             fiveHour: fiveHourSummary,
             week: weekSummary,
             month: monthSummary,
+            allTime: allTimeSummary,
+            earliestRecordDate: earliestDate,
             weekPeriod: weekPeriod,
             monthPeriod: monthPeriod,
             outputSpeed: outputSpeed,

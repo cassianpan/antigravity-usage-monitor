@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-11-24
+
+### Added
+
+- **All-time cumulative API usage in Settings › Data**: Added a cumulative summary card showing all-time API-equivalent spend, total cache savings, total tokens (input / output / cache read), requests, sessions, cache hit rate, and start date.
+- **Persistent full-week spend basis & daily run-rate projection**: Learns and persists the full-week spend/token basis once a week reaches ≥ 10% usage so projections stay available right after a weekly reset; falls back to current-cycle daily run-rate before a historical basis exists.
+
+### Changed
+
+- **Cleaner panel header & refined `Ultra` badge**: Removed the top-right update pill so update notices appear only as a subtle blue dot on bottom-left **Settings…** (clicking opens **Settings › General** with release notes expanded). Updated the `Ultra` badge from dark text on flat blue to white text on a blue-indigo gradient (`#3B82F6 → #6366F1`) matching the brand star.
+
 ## [0.1.6] - 2026-11-24
 
 ### Changed

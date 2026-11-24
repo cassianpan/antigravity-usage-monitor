@@ -75,40 +75,6 @@ struct PanelView: View {
 
             Spacer()
 
-            if let update = store.visibleAvailableUpdate {
-                Button {
-                    preferences.selectedSettingsTab = .general
-                    store.showUpdateNotes()
-                    onOpenSettings()
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 10))
-                        Text("v\(update.version)")
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    }
-                    .foregroundStyle(Palette.accent)
-                    .padding(.horizontal, 6)
-                    .frame(height: 18)
-                    .background(Capsule().fill(Palette.accent.opacity(0.16)))
-                    .overlay(Capsule().strokeBorder(Palette.accent.opacity(0.35), lineWidth: 0.75))
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(FlatDisclosureButtonStyle())
-                .panelTip("header.update", center: tipCenter, alignment: .trailing) {
-                    Tip(
-                        title: l10n.zh ? "发现新版本" : "Update available",
-                        rows: [
-                            Tip.Row(l10n.zh ? "当前版本" : "Current", "v\(store.currentAppVersion)"),
-                            Tip.Row(l10n.zh ? "最新版本" : "Latest", "v\(update.version)", color: Palette.accent),
-                        ],
-                        note: l10n.zh
-                            ? "点击打开设置查看更新日志，支持一键下载并自动重启更新。"
-                            : "Click to open Settings for release notes and one-click in-app update."
-                    )
-                }
-            }
-
             if let tier = store.officialReport.planTier, !tier.isEmpty {
                 HStack(spacing: 6) {
                     PlanTagView(rawTier: tier)
@@ -851,22 +817,39 @@ struct PanelView: View {
                 .padding(2)
                 .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
-                // Projected full-quota spend & tokens (matching claude-usage-monitor)
-                let projection: (costUSD: Double, tokens: Int)? = {
-                    guard preferences.selectedSpendTab != .today,
-                          let weekly = store.officialReport.primaryWeekly,
-                          !weekly.isResetElapsed,
-                          weekly.usedFraction >= 0.10,
-                          store.localReport.week.estimatedCostUSD > 0 else {
-                        return nil
+                // Projected spend & tokens:
+                // 1) Current week official ratio (>= 10% usage),
+                // 2) Borrowed full-week basis from a previous >= 10% week (matching claude-usage-monitor),
+                // 3) Fallback to daily run-rate when neither exists yet.
+                let projection: (costUSD: Double, tokens: Int, isRunRate: Bool)? = {
+                    guard preferences.selectedSpendTab != .today else { return nil }
+                    let isMonth = preferences.selectedSpendTab == .month
+                    let weeksInMonth = Double(store.localReport.monthPeriod?.totalDays ?? 30) / 7.0
+
+                    if let weekly = store.officialReport.primaryWeekly,
+                       !weekly.isResetElapsed,
+                       weekly.usedFraction >= 0.10,
+                       store.localReport.week.estimatedCostUSD > 0 {
+                        let fullWeekCost = store.localReport.week.estimatedCostUSD / weekly.usedFraction
+                        let fullWeekTokens = Double(store.localReport.week.totalTokens) / weekly.usedFraction
+                        return isMonth
+                            ? (fullWeekCost * weeksInMonth, Int(fullWeekTokens * weeksInMonth), false)
+                            : (fullWeekCost, Int(fullWeekTokens), false)
                     }
-                    let fullWeekCost = store.localReport.week.estimatedCostUSD / weekly.usedFraction
-                    let fullWeekTokens = Double(store.localReport.week.totalTokens) / weekly.usedFraction
-                    if preferences.selectedSpendTab == .month {
-                        let weeksInMonth = Double(store.localReport.monthPeriod?.totalDays ?? 30) / 7.0
-                        return (fullWeekCost * weeksInMonth, Int(fullWeekTokens * weeksInMonth))
+
+                    if preferences.savedFullWeekCostUSD > 0 {
+                        let fullWeekCost = preferences.savedFullWeekCostUSD
+                        let fullWeekTokens = Double(preferences.savedFullWeekTokens)
+                        return isMonth
+                            ? (fullWeekCost * weeksInMonth, Int(fullWeekTokens * weeksInMonth), false)
+                            : (fullWeekCost, Int(fullWeekTokens), false)
                     }
-                    return (fullWeekCost, Int(fullWeekTokens))
+
+                    if let period = activePeriod, period.currentDay >= 1, summary.estimatedCostUSD > 0 {
+                        let scale = Double(period.totalDays) / Double(period.currentDay)
+                        return (summary.estimatedCostUSD * scale, Int(Double(summary.totalTokens) * scale), true)
+                    }
+                    return nil
                 }()
 
                 // Big cost + projected total + 14-day mini bars side by side
@@ -892,14 +875,20 @@ struct PanelView: View {
                                     .foregroundStyle(Palette.tertiary)
                                     .panelTip("spend.projected", center: tipCenter, alignment: .leading) {
                                         Tip(
-                                            title: l10n.zh ? "满额预计用量" : "Projected full-limit usage",
+                                            title: proj.isRunRate
+                                                ? (l10n.zh ? "按当前节奏预计" : "Projected at current pace")
+                                                : (l10n.zh ? "满额预计用量" : "Projected full-limit usage"),
                                             rows: [
-                                                Tip.Row(l10n.zh ? "预计满额花费" : "Projected spend", projCostStr),
-                                                Tip.Row(l10n.zh ? "预计满额 Tokens" : "Projected tokens", "~\(UsageFormatter.compactTokens(proj.tokens))"),
+                                                Tip.Row(l10n.zh ? "预计花费" : "Projected spend", projCostStr),
+                                                Tip.Row(l10n.zh ? "预计 Tokens" : "Projected tokens", "~\(UsageFormatter.compactTokens(proj.tokens))"),
                                             ],
-                                            note: l10n.zh
-                                                ? "按当前周限额已用比例推算用满 100% 时的大致总量，仅供体感参考。"
-                                                : "Extrapolated from current weekly limit percentage assuming 100% usage."
+                                            note: proj.isRunRate
+                                                ? (l10n.zh
+                                                    ? "本周额度尚不足 10%，暂按本周期日均消耗推算；达到 10% 后自动切换为官方配额满额推算。"
+                                                    : "Weekly usage is under 10%; extrapolated from current daily pace until 10% is reached.")
+                                                : (l10n.zh
+                                                    ? "按官方周限额已用比例推算用满 100% 时的大致总量，仅供体感参考。"
+                                                    : "Extrapolated from official weekly limit percentage assuming 100% usage.")
                                         )
                                     }
                             }
@@ -1158,11 +1147,20 @@ struct PanelView: View {
                     systemImage: "slider.horizontal.3",
                     title: l10n.settings,
                     shortcut: "⌘,",
+                    extraTipRows: store.visibleAvailableUpdate.map { update in
+                        [Tip.Row(l10n.zh ? "发现新版本" : "Update available", "v\(update.version)", color: Palette.accent)]
+                    } ?? [],
                     tipAlignment: .leading,
                     interaction: interaction,
                     tipCenter: tipCenter,
                     isChinese: l10n.zh,
-                    action: onOpenSettings
+                    action: {
+                        if store.showsSettingsUpdateBadge {
+                            preferences.selectedSettingsTab = .general
+                            store.showUpdateNotes()
+                        }
+                        onOpenSettings()
+                    }
                 )
                 .overlay(alignment: .topTrailing) {
                     if store.showsSettingsUpdateBadge {

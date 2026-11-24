@@ -163,25 +163,37 @@ struct PlanTagView: View {
             .font(.system(size: 10.5, weight: .semibold))
             .tracking(Self.tracking)
             .foregroundStyle(parsed.text)
-            .padding(.horizontal, 7)
-            .frame(height: 18)
-            .background(Capsule().fill(parsed.fill))
+            .padding(.horizontal, 8)
+            .frame(height: 19)
+            .background {
+                if parsed.isUltraGradient {
+                    Capsule().fill(
+                        LinearGradient(
+                            colors: [Color(hex: 0x3B82F6), Color(hex: 0x6366F1)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                } else {
+                    Capsule().fill(parsed.fill)
+                }
+            }
             .overlay(Capsule().strokeBorder(parsed.stroke, lineWidth: 1))
             .fixedSize()
     }
 
-    private func parseTier(_ raw: String) -> (label: String, fill: Color, stroke: Color, text: Color) {
+    private func parseTier(_ raw: String) -> (label: String, fill: Color, stroke: Color, text: Color, isUltraGradient: Bool) {
         let lower = raw.lowercased()
         if lower.contains("ultra") {
-            return ("Ultra", Palette.accent, .clear, Color(hex: 0x0A1930))
+            return ("Ultra", Color(hex: 0x3B82F6), .clear, .white, true)
         }
         if lower.contains("max") {
-            return ("Max", Palette.accent.opacity(0.22), .clear, Color(hex: 0x89B4FF))
+            return ("Max", Palette.accent.opacity(0.22), .clear, Color(hex: 0x93C5FD), false)
         }
         if lower.contains("pro") {
-            return ("Pro", .clear, Palette.accent.opacity(0.65), Color(hex: 0x89B4FF))
+            return ("Pro", .clear, Palette.accent.opacity(0.55), Color(hex: 0x93C5FD), false)
         }
-        return (raw.capitalized, Color.white.opacity(0.08), .clear, Palette.secondary)
+        return (raw.capitalized, Color.white.opacity(0.10), .clear, Palette.secondary, false)
     }
 }
 

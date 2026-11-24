@@ -277,7 +277,61 @@ struct SettingsView: View {
 
     private func dataContent(l10n: L10n) -> some View {
         let zh = l10n.zh
+        let all = store.localReport.allTime
+        let sinceText: String? = store.localReport.earliestRecordDate.map { date in
+            let fmt = zh ? CachedFormatters.zhDay : CachedFormatters.enDay
+            return zh ? "自 \(fmt.string(from: date)) 起" : "Since \(fmt.string(from: date))"
+        }
+
         return VStack(alignment: .leading, spacing: 16) {
+            // All-time cumulative API usage summary
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(zh ? "累计 API 等效用量" : "All-time API-equivalent usage")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Palette.text)
+                    Spacer()
+                    if let sinceText {
+                        Text(sinceText)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Palette.tertiary)
+                    }
+                }
+
+                HStack(alignment: .lastTextBaseline, spacing: 8) {
+                    Text(preferences.formatMoney(all.estimatedCostUSD))
+                        .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Palette.text)
+                    if all.cacheSavingsUSD > 0 {
+                        Text(zh ? "缓存累计省 \(preferences.formatMoney(all.cacheSavingsUSD))" : "Saved \(preferences.formatMoney(all.cacheSavingsUSD))")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(Palette.safeGreen)
+                    }
+                    Spacer()
+                }
+
+                HStack(spacing: 14) {
+                    cumulativeStat(label: zh ? "总 Tokens" : "Tokens", value: UsageFormatter.compactTokens(all.totalTokens))
+                    cumulativeStat(label: zh ? "请求" : "Requests", value: "\(all.requestCount)")
+                    cumulativeStat(label: zh ? "会话" : "Sessions", value: "\(store.localReport.conversationCount)")
+                    cumulativeStat(label: zh ? "缓存命中" : "Cache hit", value: String(format: "%.1f%%", all.cacheHitRate * 100))
+                }
+
+                Hairline()
+
+                HStack(spacing: 14) {
+                    cumulativeStat(label: zh ? "新增输入" : "Input", value: UsageFormatter.compactTokens(all.uncachedInputTokens))
+                    cumulativeStat(label: zh ? "输出" : "Output", value: UsageFormatter.compactTokens(all.outputTokens))
+                    cumulativeStat(label: zh ? "缓存读取" : "Cache read", value: UsageFormatter.compactTokens(all.cacheReadTokens))
+                }
+            }
+            .padding(14)
+            .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.75)
+            )
+
             QuietNoticeRow(
                 systemImage: "chevron.forward.square",
                 title: zh ? "后台自动同步官方额度（免值守终端）" : "Silent Background Sync (No Terminal Needed)",
@@ -700,5 +754,17 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private func cumulativeStat(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(Palette.tertiary)
+            Text(value)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(Palette.text)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

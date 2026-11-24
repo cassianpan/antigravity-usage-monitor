@@ -239,6 +239,8 @@ public struct LocalUsageReport: Sendable, Equatable {
     public let fiveHour: UsageWindowSummary
     public let week: UsageWindowSummary
     public let month: UsageWindowSummary
+    public let allTime: UsageWindowSummary
+    public let earliestRecordDate: Date?
     public let weekPeriod: BillingPeriodInfo?
     public let monthPeriod: BillingPeriodInfo?
     public let outputSpeed: OutputSpeedSnapshot
@@ -252,6 +254,8 @@ public struct LocalUsageReport: Sendable, Equatable {
         fiveHour: UsageWindowSummary = .init(),
         week: UsageWindowSummary = .init(),
         month: UsageWindowSummary = .init(),
+        allTime: UsageWindowSummary = .init(),
+        earliestRecordDate: Date? = nil,
         weekPeriod: BillingPeriodInfo? = nil,
         monthPeriod: BillingPeriodInfo? = nil,
         outputSpeed: OutputSpeedSnapshot = .init(),
@@ -264,6 +268,8 @@ public struct LocalUsageReport: Sendable, Equatable {
         self.fiveHour = fiveHour
         self.week = week
         self.month = month
+        self.allTime = allTime
+        self.earliestRecordDate = earliestRecordDate
         self.weekPeriod = weekPeriod
         self.monthPeriod = monthPeriod
         self.outputSpeed = outputSpeed

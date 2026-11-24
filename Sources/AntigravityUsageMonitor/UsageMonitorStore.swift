@@ -407,6 +407,14 @@ final class UsageMonitorStore {
             self.localReport = payload.localReport
             self.runningProcesses = payload.runningProcesses
 
+            if let weekly = payload.officialReport.primaryWeekly,
+               !weekly.isResetElapsed,
+               weekly.usedFraction >= 0.10,
+               payload.localReport.week.estimatedCostUSD > 0 {
+                self.preferences.savedFullWeekCostUSD = payload.localReport.week.estimatedCostUSD / weekly.usedFraction
+                self.preferences.savedFullWeekTokens = Int(Double(payload.localReport.week.totalTokens) / weekly.usedFraction)
+            }
+
             let currentTokens = payload.localReport.week.totalTokens
             let tokensIncreased = currentTokens > self.lastSeenTotalTokens
             self.lastSeenTotalTokens = currentTokens

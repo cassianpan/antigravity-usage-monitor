@@ -118,6 +118,15 @@ final class AppPreferences {
         didSet { defaults.set(dismissedUpdateVersion, forKey: Keys.dismissedUpdateVersion) }
     }
 
+    /// Persisted full-week cost/token basis learned from a previous week with >= 10% usage.
+    var savedFullWeekCostUSD: Double {
+        didSet { defaults.set(savedFullWeekCostUSD, forKey: Keys.savedFullWeekCostUSD) }
+    }
+
+    var savedFullWeekTokens: Int {
+        didSet { defaults.set(savedFullWeekTokens, forKey: Keys.savedFullWeekTokens) }
+    }
+
     func formatMoney(_ usd: Double) -> String {
         UsageFormatter.money(usd, currency: displayCurrency, cnyRate: cnyExchangeRate)
     }
@@ -184,6 +193,8 @@ final class AppPreferences {
         static let enableBillingReminders = "alerts.billing"
         static let autoCheckUpdates = "updates.autoCheck"
         static let dismissedUpdateVersion = "updates.dismissedVersion"
+        static let savedFullWeekCostUSD = "quota.savedFullWeekCostUSD"
+        static let savedFullWeekTokens = "quota.savedFullWeekTokens"
         static let spendTab = "panel.spendTab"
     }
 
@@ -208,6 +219,8 @@ final class AppPreferences {
             Keys.enableBillingReminders: true,
             Keys.autoCheckUpdates: true,
             Keys.dismissedUpdateVersion: "",
+            Keys.savedFullWeekCostUSD: 0.0,
+            Keys.savedFullWeekTokens: 0,
             Keys.spendTab: SpendWindowTab.week.rawValue,
         ])
 
@@ -242,6 +255,8 @@ final class AppPreferences {
         self.enableBillingReminders = defaults.bool(forKey: Keys.enableBillingReminders)
         self.autoCheckUpdates = defaults.bool(forKey: Keys.autoCheckUpdates)
         self.dismissedUpdateVersion = defaults.string(forKey: Keys.dismissedUpdateVersion) ?? ""
+        self.savedFullWeekCostUSD = max(0, defaults.double(forKey: Keys.savedFullWeekCostUSD))
+        self.savedFullWeekTokens = max(0, defaults.integer(forKey: Keys.savedFullWeekTokens))
         self.selectedSpendTab = SpendWindowTab(rawValue: defaults.string(forKey: Keys.spendTab) ?? "") ?? .week
     }
 }
