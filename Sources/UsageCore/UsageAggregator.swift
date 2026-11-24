@@ -51,7 +51,9 @@ public struct UsageAggregator: Sendable {
         let monthSummary = summarize(monthRecords)
         let allTimeSummary = summarize(records)
         let earliestDate = records.map(\.timestamp).min()
+        let todayByModel = summarizeByModel(todayRecords)
         let byModel = summarizeByModel(weekRecords)
+        let monthByModel = summarizeByModel(monthRecords)
         let dailyTrend = buildDailyTrend(records: records, now: now, days: 14)
         let outputSpeed = estimateOutputSpeed(records: records, now: now)
 
@@ -66,6 +68,8 @@ public struct UsageAggregator: Sendable {
             monthPeriod: monthPeriod,
             outputSpeed: outputSpeed,
             byModel: byModel,
+            todayByModel: todayByModel,
+            monthByModel: monthByModel,
             dailyTrend: dailyTrend,
             conversationCount: conversationCount,
             updatedAt: now
@@ -263,6 +267,11 @@ public struct UsageAggregator: Sendable {
             )
         }
         .sorted { lhs, rhs in
+            let lc = lhs.estimatedCostUSD ?? -1
+            let rc = rhs.estimatedCostUSD ?? -1
+            if abs(lc - rc) > 1e-9 {
+                return lc > rc
+            }
             if lhs.totalTokens != rhs.totalTokens {
                 return lhs.totalTokens > rhs.totalTokens
             }

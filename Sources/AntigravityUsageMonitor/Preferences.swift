@@ -3,6 +3,64 @@ import ServiceManagement
 import SwiftUI
 import UsageCore
 
+/// Live USD exchange rates fetched hourly from ECB via Frankfurter (`api.frankfurter.app`),
+/// persisted locally in UserDefaults with built-in offline fallbacks.
+@MainActor
+@Observable
+final class ExchangeRates {
+    static let shared = ExchangeRates()
+
+    private(set) var perUSD: [String: Double]
+    private(set) var fetchedAt: Date?
+
+    @ObservationIgnored private var inFlight = false
+    nonisolated static let endpoint = URL(string: "https://api.frankfurter.app/latest?from=USD")!
+    static let refreshInterval: TimeInterval = 60 * 60
+
+    private init() {
+        let d = UserDefaults.standard
+        perUSD = d.dictionary(forKey: "fxPerUSD") as? [String: Double] ?? [:]
+        if let stamp = d.object(forKey: "fxFetchedAt") as? Double {
+            fetchedAt = Date(timeIntervalSince1970: stamp)
+        }
+    }
+
+    func rate(for currency: DisplayCurrency) -> Double {
+        if currency == .usd { return 1.0 }
+        if let r = perUSD[currency.code], r > 0, r.isFinite {
+            return r
+        }
+        return currency.fallbackPerUSD
+    }
+
+    func refreshIfStale() {
+        if let fetchedAt, Date().timeIntervalSince(fetchedAt) < Self.refreshInterval {
+            return
+        }
+        refresh()
+    }
+
+    func refresh() {
+        guard !inFlight else { return }
+        inFlight = true
+        Task {
+            defer { inFlight = false }
+            guard let (data, response) = try? await URLSession.shared.data(from: Self.endpoint),
+                  let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  let parsed = try? FXRates.perUSD(fromFrankfurter: data),
+                  parsed["EUR"] != nil else {
+                return
+            }
+            perUSD = parsed
+            fetchedAt = Date()
+            let d = UserDefaults.standard
+            d.set(parsed, forKey: "fxPerUSD")
+            d.set(fetchedAt?.timeIntervalSince1970, forKey: "fxFetchedAt")
+        }
+    }
+}
+
 enum SectionDensity: String, CaseIterable, Identifiable {
     case detailed = "detailed"
     case simple = "simple"
@@ -127,12 +185,26 @@ final class AppPreferences {
         didSet { defaults.set(savedFullWeekTokens, forKey: Keys.savedFullWeekTokens) }
     }
 
+    var currentExchangeRate: Double {
+        ExchangeRates.shared.rate(for: displayCurrency)
+    }
+
+    func convertUSD(_ usd: Double) -> Double {
+        usd * currentExchangeRate
+    }
+
     func formatMoney(_ usd: Double) -> String {
-        UsageFormatter.money(usd, currency: displayCurrency, cnyRate: cnyExchangeRate)
+        UsageFormatter.money(usd, currency: displayCurrency, ratePerUSD: currentExchangeRate)
     }
 
     func formatMoneyCompact(_ usd: Double) -> String {
-        UsageFormatter.moneyCompact(usd, currency: displayCurrency, cnyRate: cnyExchangeRate)
+        UsageFormatter.moneyCompact(usd, currency: displayCurrency, ratePerUSD: currentExchangeRate)
+    }
+
+    func cycleCurrency() {
+        let all = DisplayCurrency.allCases
+        let index = all.firstIndex(of: displayCurrency) ?? 0
+        displayCurrency = all[(index + 1) % all.count]
     }
 
     var selectedSpendTab: SpendWindowTab {

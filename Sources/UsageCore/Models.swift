@@ -245,6 +245,8 @@ public struct LocalUsageReport: Sendable, Equatable {
     public let monthPeriod: BillingPeriodInfo?
     public let outputSpeed: OutputSpeedSnapshot
     public let byModel: [ModelUsageSummary]
+    public let todayByModel: [ModelUsageSummary]
+    public let monthByModel: [ModelUsageSummary]
     public let dailyTrend: [DailyUsagePoint]
     public let conversationCount: Int
     public let updatedAt: Date
@@ -260,6 +262,8 @@ public struct LocalUsageReport: Sendable, Equatable {
         monthPeriod: BillingPeriodInfo? = nil,
         outputSpeed: OutputSpeedSnapshot = .init(),
         byModel: [ModelUsageSummary] = [],
+        todayByModel: [ModelUsageSummary] = [],
+        monthByModel: [ModelUsageSummary] = [],
         dailyTrend: [DailyUsagePoint] = [],
         conversationCount: Int = 0,
         updatedAt: Date = Date()
@@ -274,6 +278,8 @@ public struct LocalUsageReport: Sendable, Equatable {
         self.monthPeriod = monthPeriod
         self.outputSpeed = outputSpeed
         self.byModel = byModel
+        self.todayByModel = todayByModel
+        self.monthByModel = monthByModel
         self.dailyTrend = dailyTrend
         self.conversationCount = conversationCount
         self.updatedAt = updatedAt

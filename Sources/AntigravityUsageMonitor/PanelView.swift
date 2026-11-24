@@ -496,6 +496,8 @@ struct PanelView: View {
                 Spacer()
                 Text("\(bucket.usedPercentageInt)%")
                     .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                    .monospacedDigit()
+                    .contentTransition(.numericText(value: Double(bucket.usedPercentageInt)))
                     .foregroundStyle(bucket.isResetElapsed ? Palette.safeGreen : levelColor)
             }
 
@@ -634,6 +636,8 @@ struct PanelView: View {
                                 HStack(alignment: .lastTextBaseline, spacing: 3) {
                                     Text("~\(Int(round(tokPerSec)))")
                                         .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                                        .monospacedDigit()
+                                        .contentTransition(.numericText(value: round(tokPerSec)))
                                         .foregroundStyle(Palette.text)
                                     Text("tok/s")
                                         .font(.system(size: 11.5, weight: .regular))
@@ -852,25 +856,36 @@ struct PanelView: View {
             }
 
             if !preferences.spendCollapsed {
-                // Dark capsule segmented control (full-area hit target + hover + smooth transition)
+                // Dark capsule segmented control with sliding active pill (1:1 ported from claude-usage-monitor SpanTabs)
+                let allTabs = SpendWindowTab.allCases
+                let selectedIndex = CGFloat(allTabs.firstIndex(of: preferences.selectedSpendTab) ?? 0)
                 HStack(spacing: 2) {
-                    ForEach(SpendWindowTab.allCases) { tab in
+                    ForEach(allTabs) { tab in
                         let selected = preferences.selectedSpendTab == tab
                         let hovered = interaction.hoveredTab == tab && !selected
                         Button {
                             guard preferences.selectedSpendTab != tab else { return }
-                            preferences.selectedSpendTab = tab
+                            withAnimation(.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.3)) {
+                                preferences.selectedSpendTab = tab
+                            }
                         } label: {
-                            Text(tab.label(l10n: l10n))
-                                .font(.system(size: 11.5, weight: selected ? .medium : .regular))
-                                .foregroundStyle(selected ? Palette.text : (hovered ? Palette.text.opacity(0.8) : Palette.secondary))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 5)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .fill(selected ? Palette.controlSelected : (hovered ? Palette.hover : Color.clear))
-                                )
-                                .contentShape(Rectangle())
+                            ZStack {
+                                Text(tab.label(l10n: l10n))
+                                    .font(.system(size: 11.5, weight: .regular))
+                                    .foregroundStyle(hovered ? Palette.text.opacity(0.8) : Palette.secondary)
+                                    .opacity(selected ? 0 : 1)
+                                Text(tab.label(l10n: l10n))
+                                    .font(.system(size: 11.5, weight: .medium))
+                                    .foregroundStyle(Palette.text)
+                                    .opacity(selected ? 1 : 0)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(hovered ? Palette.hover : Color.clear)
+                            )
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .onHover { inside in
@@ -882,6 +897,15 @@ struct PanelView: View {
                                 }
                             }
                         }
+                    }
+                }
+                .background(alignment: .leading) {
+                    GeometryReader { geo in
+                        let width = (geo.size.width - 2 * CGFloat(allTabs.count - 1)) / CGFloat(allTabs.count)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Palette.controlSelected)
+                            .frame(width: max(0, width), height: geo.size.height)
+                            .offset(x: selectedIndex * (width + 2))
                     }
                 }
                 .padding(2)
@@ -923,26 +947,61 @@ struct PanelView: View {
                 }()
 
                 // Big cost + projected total + 14-day mini bars side by side
+                let convertedCost = preferences.convertUSD(summary.estimatedCostUSD)
                 HStack(alignment: .bottom) {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(alignment: .lastTextBaseline, spacing: 6) {
                             Text(preferences.formatMoney(summary.estimatedCostUSD))
                                 .font(.system(size: 25, weight: .semibold, design: .monospaced))
+                                .tracking(-0.4)
                                 .foregroundStyle(Palette.text)
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.55)
+                                .contentTransition(.numericText(value: convertedCost))
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    withAnimation(.easeOut(duration: 0.22)) {
+                                        preferences.cycleCurrency()
+                                    }
+                                    store.onMenuBarUpdate?()
+                                }
                                 .panelTip("spend.cost", center: tipCenter, alignment: .leading) {
-                                    Tip(
+                                    var rows: [Tip.Row] = []
+                                    if preferences.displayCurrency != .usd {
+                                        let rateStr = String(format: "%.2f", preferences.currentExchangeRate)
+                                        rows.append(Tip.Row(
+                                            l10n.zh ? "参考汇率" : "FX rate",
+                                            "1 USD ≈ \(preferences.displayCurrency.symbol)\(rateStr)"
+                                        ))
+                                    }
+                                    let baseNote = l10n.zh
+                                        ? "按各模型公开 API 单价折算本机历史会话消耗，并非订阅实际扣费。\n点击金额切换货币"
+                                        : "Estimated from published API list prices for local sessions, not your subscription bill.\nClick the amount to change currency"
+                                    return Tip(
                                         title: l10n.zh ? "API 等价花费估算" : "API-equivalent spend estimate",
-                                        note: l10n.zh
-                                            ? "按各模型公开 API 单价折算本机历史会话消耗，并非订阅实际扣费。"
-                                            : "Estimated from published API list prices for local sessions, not your subscription bill."
+                                        rows: rows,
+                                        note: baseNote
                                     )
                                 }
 
                             if let proj = projection {
                                 let projCostStr = preferences.formatMoneyCompact(proj.costUSD)
+                                let convertedProj = preferences.convertUSD(proj.costUSD)
                                 Text(l10n.zh ? "预计 \(projCostStr)" : "→ \(projCostStr)")
                                     .font(.system(size: 11.5, design: .monospaced))
                                     .foregroundStyle(Palette.tertiary)
+                                    .monospacedDigit()
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                                    .contentTransition(.numericText(value: convertedProj))
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        withAnimation(.easeOut(duration: 0.22)) {
+                                            preferences.cycleCurrency()
+                                        }
+                                        store.onMenuBarUpdate?()
+                                    }
                                     .panelTip("spend.projected", center: tipCenter, alignment: .leading) {
                                         Tip(
                                             title: proj.isRunRate
@@ -978,31 +1037,23 @@ struct PanelView: View {
                             let dayLabel = l10n.zh
                                 ? "第 \(period.currentDay) / \(period.totalDays) 天"
                                 : "Day \(period.currentDay) of \(period.totalDays)"
-                            let extraPart: String = {
+                            let extraPart: (text: String, numeric: Double) = {
                                 if let proj = projection {
                                     let left = max(0, proj.costUSD - summary.estimatedCostUSD)
                                     let leftStr = preferences.formatMoneyCompact(left)
-                                    return l10n.zh ? " · 预计还剩 \(leftStr)" : " · \(leftStr) left"
+                                    return (l10n.zh ? " · 预计还剩 \(leftStr)" : " · \(leftStr) left", preferences.convertUSD(left))
                                 }
-                                if summary.cacheSavingsUSD > 0 {
-                                    return " · \(l10n.savedPrefix)\(preferences.formatMoney(summary.cacheSavingsUSD))"
-                                }
-                                return ""
+                                return ("", 0)
                             }()
-                            Text(dayLabel + extraPart)
+                            Text(dayLabel + extraPart.text)
                                 .font(.system(size: 10.5, design: .monospaced))
+                                .monospacedDigit()
+                                .contentTransition(.numericText(value: extraPart.numeric))
                                 .foregroundStyle(Palette.tertiary)
-                        } else if summary.cacheSavingsUSD > 0 {
-                            Text("\(l10n.savedPrefix)\(preferences.formatMoney(summary.cacheSavingsUSD))")
-                                .font(.system(size: 10.5, design: .monospaced))
+                        } else {
+                            Text(l10n.zh ? "当天" : "Today")
+                                .font(.system(size: 10.5))
                                 .foregroundStyle(Palette.tertiary)
-                                .panelTip("spend.saved.sub", center: tipCenter, alignment: .leading) {
-                                    Tip(
-                                        l10n.zh
-                                            ? "如果没有 Prompt Caching，这些命中缓存的 token 需要按原价计费。"
-                                            : "Without prompt caching, these cached tokens would be billed at full input price."
-                                    )
-                                }
                         }
                     }
 
@@ -1022,7 +1073,11 @@ struct PanelView: View {
 
                 // Compact summary row: Tokens · Requests · Today
                 HStack {
-                    inlineStat(label: l10n.tokens, value: UsageFormatter.compactTokens(summary.totalTokens))
+                    inlineStat(
+                        label: l10n.tokens,
+                        value: UsageFormatter.compactTokens(summary.totalTokens),
+                        numericValue: Double(summary.totalTokens)
+                    )
                         .panelTip("spend.tokens", center: tipCenter, alignment: .leading) {
                             Tip(
                                 title: l10n.zh ? "总 Token 构成" : "Total tokens",
@@ -1034,7 +1089,11 @@ struct PanelView: View {
                             )
                         }
                     Spacer()
-                    inlineStat(label: l10n.requests, value: "\(summary.requestCount)")
+                    inlineStat(
+                        label: l10n.requests,
+                        value: "\(summary.requestCount)",
+                        numericValue: Double(summary.requestCount)
+                    )
                         .panelTip("spend.requests", center: tipCenter, alignment: .center) {
                             Tip(
                                 l10n.zh
@@ -1043,22 +1102,43 @@ struct PanelView: View {
                             )
                         }
                     Spacer()
-                    inlineStat(label: l10n.todayShort, value: preferences.formatMoney(store.localReport.today.estimatedCostUSD))
+                    inlineStat(
+                        label: l10n.todayShort,
+                        value: preferences.formatMoney(store.localReport.today.estimatedCostUSD),
+                        numericValue: preferences.convertUSD(store.localReport.today.estimatedCostUSD)
+                    )
                         .panelTip("spend.today", center: tipCenter, alignment: .trailing) {
-                            Tip(
+                            let resetNote: String? = {
+                                if preferences.selectedSpendTab == .week,
+                                   store.localReport.today.estimatedCostUSD > store.localReport.week.estimatedCostUSD + 0.01,
+                                   let weekStart = store.localReport.weekPeriod?.start {
+                                    let hhmm = CachedFormatters.hhmm.string(from: weekStart)
+                                    return l10n.zh
+                                        ? "今日自 00:00 起算，包含今天 \(hhmm) 本周期重置前的消耗。"
+                                        : "Today starts at 00:00 and includes spend before today's \(hhmm) weekly reset."
+                                }
+                                return nil
+                            }()
+                            return Tip(
                                 title: l10n.zh ? "今日消耗" : "Today's spend",
                                 rows: [
                                     Tip.Row("Tokens", UsageFormatter.compactTokens(store.localReport.today.totalTokens)),
                                     Tip.Row(l10n.requests, "\(store.localReport.today.requestCount)"),
                                     Tip.Row(l10n.cacheHitRate, UsageFormatter.percentageOneDecimal(store.localReport.today.cacheHitRate)),
-                                ]
+                                ],
+                                note: resetNote
                             )
                         }
                 }
 
                 // Token breakdown columns with colored dots
                 HStack(spacing: 0) {
-                    tokenDotColumn(dot: Palette.input, label: l10n.input, value: UsageFormatter.compactTokens(summary.uncachedInputTokens))
+                    tokenDotColumn(
+                        dot: Palette.input,
+                        label: l10n.input,
+                        value: UsageFormatter.compactTokens(summary.uncachedInputTokens),
+                        numericValue: Double(summary.uncachedInputTokens)
+                    )
                         .panelTip("spend.input", center: tipCenter, alignment: .leading) {
                             Tip(
                                 l10n.zh
@@ -1066,7 +1146,12 @@ struct PanelView: View {
                                     : "Uncached input tokens sent fresh to the model."
                             )
                         }
-                    tokenDotColumn(dot: Palette.output, label: l10n.output, value: UsageFormatter.compactTokens(summary.outputTokens))
+                    tokenDotColumn(
+                        dot: Palette.output,
+                        label: l10n.output,
+                        value: UsageFormatter.compactTokens(summary.outputTokens),
+                        numericValue: Double(summary.outputTokens)
+                    )
                         .panelTip("spend.output", center: tipCenter, alignment: .center) {
                             Tip(
                                 l10n.zh
@@ -1074,7 +1159,12 @@ struct PanelView: View {
                                     : "Output tokens generated by the model (including thinking tokens)."
                             )
                         }
-                    tokenDotColumn(dot: Palette.cacheRead, label: l10n.cacheRead, value: UsageFormatter.compactTokens(summary.cacheReadTokens))
+                    tokenDotColumn(
+                        dot: Palette.cacheRead,
+                        label: l10n.cacheRead,
+                        value: UsageFormatter.compactTokens(summary.cacheReadTokens),
+                        numericValue: Double(summary.cacheReadTokens)
+                    )
                         .panelTip("spend.cacheRead", center: tipCenter, alignment: .trailing) {
                             Tip(
                                 l10n.zh
@@ -1094,6 +1184,8 @@ struct PanelView: View {
                         if summary.cacheSavingsUSD > 0 {
                             Text("\(l10n.savedPrefix)\(preferences.formatMoney(summary.cacheSavingsUSD))")
                                 .font(.system(size: 11, design: .monospaced))
+                                .monospacedDigit()
+                                .contentTransition(.numericText(value: preferences.convertUSD(summary.cacheSavingsUSD)))
                                 .foregroundStyle(Palette.tertiary)
                                 .panelTip("spend.saved.bar", center: tipCenter, alignment: .trailing) {
                                     Tip(
@@ -1105,6 +1197,8 @@ struct PanelView: View {
                         }
                         Text(summary.totalInputTokens > 0 ? UsageFormatter.percentageOneDecimal(summary.cacheHitRate) : "--")
                             .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .monospacedDigit()
+                            .contentTransition(.numericText(value: summary.cacheHitRate))
                             .foregroundStyle(Palette.text)
                     }
 
@@ -1128,46 +1222,72 @@ struct PanelView: View {
                     )
                 }
 
-                // Per-model breakdown
-                if preferences.spendSectionDensity == .detailed, !store.localReport.byModel.isEmpty {
-                    let weekTotalTokens = max(1, store.localReport.byModel.reduce(0) { $0 + $1.totalTokens })
+                // Per-model breakdown for the selected tab (max 3 rows: top 2 + Other, shares = 100%, amounts = exact total)
+                let activeModels: [ModelUsageSummary] = {
+                    switch preferences.selectedSpendTab {
+                    case .month: return store.localReport.monthByModel
+                    case .week: return store.localReport.byModel
+                    case .today: return store.localReport.todayByModel
+                    }
+                }()
+                if preferences.spendSectionDensity == .detailed, !activeModels.isEmpty {
+                    let displayRows = buildModelDisplayRows(
+                        models: activeModels,
+                        totalCostUSD: summary.estimatedCostUSD,
+                        l10n: l10n
+                    )
                     VStack(spacing: 5) {
-                        ForEach(store.localReport.byModel.prefix(3)) { model in
-                            let share = Double(model.totalTokens) / Double(weekTotalTokens)
+                        ForEach(displayRows) { row in
                             HStack(spacing: 8) {
-                                Text(model.displayName)
+                                Text(row.name)
                                     .font(.system(size: 11.5))
                                     .foregroundStyle(Palette.secondary)
                                     .lineLimit(1)
                                 Spacer()
-                                Text(UsageFormatter.percentageOneDecimal(share))
+                                Text(row.shareText)
                                     .font(.system(size: 11, design: .monospaced))
+                                    .monospacedDigit()
+                                    .contentTransition(.numericText(value: row.shareValue))
                                     .foregroundStyle(Palette.tertiary)
-                                if let cost = model.estimatedCostUSD {
-                                    Text(preferences.formatMoney(cost))
+                                    .frame(width: 44, alignment: .trailing)
+                                if let amountText = row.amountText {
+                                    Text(amountText)
                                         .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                                        .monospacedDigit()
+                                        .contentTransition(.numericText(value: preferences.convertUSD(row.costUSD)))
                                         .foregroundStyle(Palette.text)
-                                        .frame(minWidth: 54, alignment: .trailing)
+                                        .frame(minWidth: 62, alignment: .trailing)
                                 } else {
                                     Text(l10n.unpricedLabel)
                                         .font(.system(size: 10.5))
                                         .foregroundStyle(Palette.warning)
-                                        .frame(minWidth: 54, alignment: .trailing)
+                                        .frame(minWidth: 62, alignment: .trailing)
                                 }
                             }
                             .contentShape(Rectangle())
-                            .panelTip("model.\(model.id)", center: tipCenter, alignment: .center) {
-                                var rows: [Tip.Row] = [
-                                    Tip.Row(l10n.input, UsageFormatter.compactTokens(model.uncachedInputTokens), dot: Palette.input),
-                                    Tip.Row(l10n.output, UsageFormatter.compactTokens(model.outputTokens), dot: Palette.output),
-                                    Tip.Row(l10n.cacheRead, UsageFormatter.compactTokens(model.cacheReadTokens), dot: Palette.cacheRead),
-                                    Tip.Row(l10n.cacheHitRate, UsageFormatter.percentageOneDecimal(model.cacheHitRate), separated: true),
-                                    Tip.Row(l10n.requests, "\(model.requestCount)"),
-                                ]
-                                if let saved = model.cacheSavingsUSD, saved > 0 {
-                                    rows.append(Tip.Row(l10n.zh ? "缓存节省" : "Cache saved", preferences.formatMoney(saved), color: Palette.safeGreen))
+                            .panelTip("model.\(preferences.selectedSpendTab.rawValue).\(row.id)", center: tipCenter, alignment: .center) {
+                                if row.members.count == 1, let model = row.members.first {
+                                    var tipRows: [Tip.Row] = [
+                                        Tip.Row(l10n.input, UsageFormatter.compactTokens(model.uncachedInputTokens), dot: Palette.input),
+                                        Tip.Row(l10n.output, UsageFormatter.compactTokens(model.outputTokens), dot: Palette.output),
+                                        Tip.Row(l10n.cacheRead, UsageFormatter.compactTokens(model.cacheReadTokens), dot: Palette.cacheRead),
+                                        Tip.Row(l10n.cacheHitRate, UsageFormatter.percentageOneDecimal(model.cacheHitRate), separated: true),
+                                        Tip.Row(l10n.requests, "\(model.requestCount)"),
+                                    ]
+                                    if let saved = model.cacheSavingsUSD, saved > 0 {
+                                        tipRows.append(Tip.Row(l10n.zh ? "缓存节省" : "Cache saved", preferences.formatMoney(saved), color: Palette.safeGreen))
+                                    }
+                                    return Tip(title: model.displayName, rows: tipRows)
+                                } else {
+                                    let title = l10n.zh ? "其他 \(row.members.count) 个模型" : "\(row.members.count) other models"
+                                    let tipRows = row.members.map { m in
+                                        let detail = l10n.zh
+                                            ? "\(m.requestCount) 次 · \(UsageFormatter.compactTokens(m.totalTokens))"
+                                            : "\(m.requestCount) req · \(UsageFormatter.compactTokens(m.totalTokens))"
+                                        return Tip.Row(m.displayName, detail)
+                                    }
+                                    return Tip(title: title, rows: tipRows)
                                 }
-                                return Tip(title: model.displayName, rows: rows)
                             }
                         }
                     }
@@ -1179,18 +1299,87 @@ struct PanelView: View {
         .padding(.vertical, 10)
     }
 
-    private func inlineStat(label: String, value: String) -> some View {
+    private struct ModelDisplayRow: Identifiable {
+        let id: String
+        let name: String
+        let shareText: String
+        let shareValue: Double
+        let amountText: String?
+        let costUSD: Double
+        let members: [ModelUsageSummary]
+    }
+
+    private func buildModelDisplayRows(
+        models: [ModelUsageSummary],
+        totalCostUSD: Double,
+        l10n: L10n
+    ) -> [ModelDisplayRow] {
+        guard !models.isEmpty else { return [] }
+        let keep = models.count > 3 ? 2 : models.count
+        var groups: [(id: String, name: String, members: [ModelUsageSummary])] = models.prefix(keep).map {
+            (id: $0.id, name: $0.displayName, members: [$0])
+        }
+        let remainder = Array(models.dropFirst(keep))
+        if !remainder.isEmpty {
+            groups.append((id: "__other__", name: l10n.zh ? "其他" : "Other", members: remainder))
+        }
+
+        let groupCosts: [Double] = groups.map { grp in
+            grp.members.reduce(0.0) { $0 + ($1.estimatedCostUSD ?? 0) }
+        }
+        let hasPricedCost = totalCostUSD > 0 && groupCosts.reduce(0, +) > 0
+        let weights: [Double] = hasPricedCost
+            ? groupCosts
+            : groups.map { grp in Double(grp.members.reduce(0) { $0 + $1.totalTokens }) }
+
+        let weightSum = max(1e-9, weights.reduce(0, +))
+        let shareTexts = UsageFormatter.apportionedShares(weights)
+        let amountTexts = hasPricedCost
+            ? UsageFormatter.apportionedMoney(
+                totalUSD: totalCostUSD,
+                partsUSD: groupCosts,
+                currency: preferences.displayCurrency,
+                ratePerUSD: preferences.currentExchangeRate
+            )
+            : []
+
+        return groups.indices.map { idx in
+            let grp = groups[idx]
+            let allUnpriced = grp.members.allSatisfy { $0.estimatedCostUSD == nil }
+            let amountText: String? = allUnpriced ? nil : (hasPricedCost ? amountTexts[idx] : preferences.formatMoney(groupCosts[idx]))
+            return ModelDisplayRow(
+                id: grp.id,
+                name: grp.name,
+                shareText: shareTexts[idx],
+                shareValue: weights[idx] / weightSum,
+                amountText: amountText,
+                costUSD: groupCosts[idx],
+                members: grp.members
+            )
+        }
+    }
+
+    private func inlineStat(label: String, value: String, numericValue: Double? = nil) -> some View {
         HStack(spacing: 5) {
             Text(label)
                 .font(.system(size: 10.5))
                 .foregroundStyle(Palette.tertiary)
-            Text(value)
-                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
-                .foregroundStyle(Palette.text)
+            Group {
+                if let numericValue {
+                    Text(value)
+                        .contentTransition(.numericText(value: numericValue))
+                } else {
+                    Text(value)
+                        .contentTransition(.numericText())
+                }
+            }
+            .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+            .monospacedDigit()
+            .foregroundStyle(Palette.text)
         }
     }
 
-    private func tokenDotColumn(dot: Color, label: String, value: String) -> some View {
+    private func tokenDotColumn(dot: Color, label: String, value: String, numericValue: Double? = nil) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Circle()
@@ -1200,9 +1389,18 @@ struct PanelView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(Palette.tertiary)
             }
-            Text(value)
-                .font(.system(size: 12.5, weight: .medium, design: .monospaced))
-                .foregroundStyle(Palette.text)
+            Group {
+                if let numericValue {
+                    Text(value)
+                        .contentTransition(.numericText(value: numericValue))
+                } else {
+                    Text(value)
+                        .contentTransition(.numericText())
+                }
+            }
+            .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+            .monospacedDigit()
+            .foregroundStyle(Palette.text)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

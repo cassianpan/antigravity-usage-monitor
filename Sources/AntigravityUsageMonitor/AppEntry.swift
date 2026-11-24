@@ -80,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarSpinAngle: CGFloat = 0
     private var disclosureTracks: [String: DisclosureTrack] = [:]
     private var disclosureDisplayLink: CADisplayLink?
+    private var liveRefreshTimer: Timer?
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -163,6 +164,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         installDismissMonitors()
         interaction.triggerRefreshSpin()
+        liveRefreshTimer?.invalidate()
+        liveRefreshTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.panel.isVisible else { return }
+                self.store.refreshNow()
+            }
+        }
         Task { [weak self] in
             await self?.store.syncOfficialInBackground(force: false)
             await self?.store.checkForUpdatesIfNeeded()
@@ -170,6 +178,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func closePanel() {
+        liveRefreshTimer?.invalidate()
+        liveRefreshTimer = nil
         finishAllDisclosureAnimations()
         tipCenter.setActive(false)
         interaction.resetHovers()

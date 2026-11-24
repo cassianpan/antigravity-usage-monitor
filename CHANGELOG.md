@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-11-24
+
+### Added
+
+- **One-click currency toggle (`$` ↔ `¥`) with live ECB exchange rate**: Click the main spend figure (or projected amount / Settings cumulative spend) to toggle between USD (`$`) and CNY (`¥`) with grouped thousands formatting (`$1,234.56`) and hourly Frankfurter ECB rate sync (falling back to `7.20` offline).
+- **Rolling odometer number transitions & sliding period tabs**: Added SwiftUI `.contentTransition(.numericText(value:))` and `withAnimation(.smooth(duration: 0.5))` across spend figures, tokens, requests, cache hit rate, model costs, output speed, and quota percentages; added a sliding active pill on the spend period selector and lightweight 2.5s incremental refreshes while the panel is open.
+
+### Fixed
+
+- **Per-period model breakdown with exact 100% shares & exact total sum**: Aggregated model usage independently for Month, Week, and Today tabs (instead of always displaying Week models), sorted by cost descending, grouped models beyond the top 2 into **Other** (hover to inspect all merged models), and apportioned shares and amounts via the largest-remainder method so rows always sum exactly to `100%` and the period total.
+- **Prevented Active Processes count flickering during background sync**: Excluded the monitor app's entire descendant process subtree (`--agy-sync-wrapper` and ephemeral `agy` probes) before process classification so the count never jumps from `1` to `2` while syncing.
+- **Removed duplicate cache-savings line on the Today tab**: Replaced the repeated savings subline under Today's spend with a clean **Today** label (keeping savings once on the Cache Hit Rate row), and added a tooltip hint when weekly resets happen mid-day.
+
 ## [0.1.8] - 2026-11-24
 
 ### Added

@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import SwiftUI
 import UsageCore
 
 struct RunningProcessInfo: Identifiable, Sendable, Equatable {
@@ -151,6 +152,7 @@ final class UsageMonitorStore {
     private var lastAutoSyncAttempt: Date = .distantPast
     private var lastUpdateCheckAt: Date = .distantPast
     private var lastSeenTotalTokens: Int = 0
+    private var hasLoadedInitialReport: Bool = false
 
     init(
         preferences: AppPreferences,
@@ -165,6 +167,7 @@ final class UsageMonitorStore {
         self.silentSyncer = SilentCLISyncer(snapshotURL: bridgeInstaller.snapshotURL, evaluator: quotaEvaluator)
         self.updateChecker = UpdateChecker()
 
+        ExchangeRates.shared.refreshIfStale()
         refreshNow()
         startTimer()
         startSnapshotWatcher()
@@ -423,9 +426,18 @@ final class UsageMonitorStore {
             let now = Date()
             self.bridgeStatus = payload.bridgeStatus
             self.cliBinaryPath = payload.cliBinaryPath
-            self.officialReport = payload.officialReport
-            self.localReport = payload.localReport
+            if self.hasLoadedInitialReport {
+                withAnimation(.smooth(duration: 0.5)) {
+                    self.officialReport = payload.officialReport
+                    self.localReport = payload.localReport
+                }
+            } else {
+                self.officialReport = payload.officialReport
+                self.localReport = payload.localReport
+                self.hasLoadedInitialReport = true
+            }
             self.runningProcesses = payload.runningProcesses
+            ExchangeRates.shared.refreshIfStale()
 
             if payload.officialReport.hasSnapshot,
                (payload.officialReport.primaryFiveHour != nil || payload.officialReport.primaryWeekly != nil),
@@ -796,20 +808,49 @@ final class UsageMonitorStore {
         proc.waitUntilExit()
         guard let output = String(data: data, encoding: .utf8) else { return [] }
 
-        var raw: [RawProcess] = []
+        struct PSRow {
+            let pid: Int32
+            let ppid: Int32
+            let rssKB: Int64
+            let tty: String?
+            let ucomm: String
+        }
+
+        var rows: [PSRow] = []
+        var allChildren: [Int32: [Int32]] = [:]
         for line in output.split(whereSeparator: \.isNewline) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             let parts = trimmed.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: true)
             guard parts.count == 5,
                   let pid = Int32(parts[0]),
                   let ppid = Int32(parts[1]),
-                  let rssKB = Int64(parts[2]),
-                  pid != selfPid else { continue }
+                  let rssKB = Int64(parts[2]) else { continue }
             let rawTTY = String(parts[3]).trimmingCharacters(in: .whitespaces)
             let tty: String? = (rawTTY == "??" || rawTTY == "-" || rawTTY.isEmpty) ? nil : rawTTY
             let ucomm = String(parts[4]).trimmingCharacters(in: .whitespaces)
-            guard let kind = classifyProcess(pid: pid, ucomm: ucomm) else { continue }
-            raw.append(RawProcess(pid: pid, ppid: ppid, kind: kind, tty: tty, bytes: rssKB * 1024))
+            rows.append(PSRow(pid: pid, ppid: ppid, rssKB: rssKB, tty: tty, ucomm: ucomm))
+            if ppid != pid {
+                allChildren[ppid, default: []].append(pid)
+            }
+        }
+
+        // Exclude our own monitor app AND its entire descendant subtree (e.g., --agy-sync-wrapper + ephemeral agy probe).
+        var excludedPIDs: Set<Int32> = [selfPid]
+        var queue: [Int32] = [selfPid]
+        var qIdx = 0
+        while qIdx < queue.count {
+            let cur = queue[qIdx]
+            qIdx += 1
+            for child in allChildren[cur] ?? [] where !excludedPIDs.contains(child) {
+                excludedPIDs.insert(child)
+                queue.append(child)
+            }
+        }
+
+        var raw: [RawProcess] = []
+        for row in rows where !excludedPIDs.contains(row.pid) {
+            guard let kind = classifyProcess(pid: row.pid, ucomm: row.ucomm) else { continue }
+            raw.append(RawProcess(pid: row.pid, ppid: row.ppid, kind: kind, tty: row.tty, bytes: row.rssKB * 1024))
         }
 
         let ids = Set(raw.map(\.pid))
@@ -928,7 +969,14 @@ final class UsageMonitorStore {
         let lower = ucomm.lowercased()
         if lower.hasPrefix("antigravityusage") { return nil }
         guard let path = processExecutablePath(pid) else {
-            return lower == "agy" ? .cli : nil
+            if lower == "agy" {
+                let args = processArguments(pid)
+                if args.contains(where: { $0.contains("agy-silent-sync-") }) {
+                    return nil
+                }
+                return .cli
+            }
+            return nil
         }
         let pathLower = path.lowercased()
         if pathLower.contains("antigravityusagemonitor") || pathLower.contains("antigravity usage monitor") {

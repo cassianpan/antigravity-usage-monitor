@@ -301,10 +301,21 @@ struct SettingsView: View {
                 HStack(alignment: .lastTextBaseline, spacing: 8) {
                     Text(preferences.formatMoney(all.estimatedCostUSD))
                         .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                        .monospacedDigit()
+                        .contentTransition(.numericText(value: preferences.convertUSD(all.estimatedCostUSD)))
                         .foregroundStyle(Palette.text)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.easeOut(duration: 0.22)) {
+                                preferences.cycleCurrency()
+                            }
+                            store.onMenuBarUpdate?()
+                        }
                     if all.cacheSavingsUSD > 0 {
                         Text(zh ? "缓存累计省 \(preferences.formatMoney(all.cacheSavingsUSD))" : "Saved \(preferences.formatMoney(all.cacheSavingsUSD))")
                             .font(.system(size: 11, design: .monospaced))
+                            .monospacedDigit()
+                            .contentTransition(.numericText(value: preferences.convertUSD(all.cacheSavingsUSD)))
                             .foregroundStyle(Palette.safeGreen)
                     }
                     Spacer()
@@ -437,41 +448,38 @@ struct SettingsView: View {
 
             Hairline()
 
-            HStack {
-                Text(zh ? "货币单位" : "Currency")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Palette.text)
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(zh ? "货币单位" : "Currency")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Palette.text)
+                    let fx = ExchangeRates.shared
+                    let rateStr = String(format: "%.2f", fx.rate(for: .cny))
+                    if preferences.displayCurrency == .cny {
+                        let suffix = fx.fetchedAt != nil
+                            ? (zh ? "（欧洲央行参考牌价，点击面板金额也可切换）" : " (ECB rate; click panel amount to switch)")
+                            : (zh ? "（离线近似汇率，点击面板金额也可切换）" : " (fallback rate; click panel amount to switch)")
+                        Text("1 USD ≈ ¥\(rateStr)\(suffix)")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Palette.tertiary)
+                    } else {
+                        Text(zh ? "点击主面板金额可在美元与人民币间快速切换" : "Click the panel amount to toggle between USD and CNY")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Palette.tertiary)
+                    }
+                }
                 Spacer()
                 SegmentSwitch(
                     options: DisplayCurrency.allCases,
                     selection: preferences.displayCurrency,
                     label: { $0 == .usd ? "USD ($)" : "CNY (¥)" },
-                    onSelect: {
-                        preferences.displayCurrency = $0
+                    onSelect: { selected in
+                        withAnimation(.easeOut(duration: 0.22)) {
+                            preferences.displayCurrency = selected
+                        }
                         store.onMenuBarUpdate?()
                     }
                 )
-            }
-
-            if preferences.displayCurrency == .cny {
-                HStack {
-                    Text(zh ? "美元兑人民币汇率" : "USD → CNY rate")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Palette.secondary)
-                    Spacer()
-                    Picker("", selection: $preferences.cnyExchangeRate) {
-                        Text("7.00").tag(7.00)
-                        Text("7.15").tag(7.15)
-                        Text("7.25").tag(7.25)
-                        Text("7.30").tag(7.30)
-                        Text("7.35").tag(7.35)
-                    }
-                    .labelsHidden()
-                    .frame(width: 86)
-                    .onChange(of: preferences.cnyExchangeRate) {
-                        store.onMenuBarUpdate?()
-                    }
-                }
             }
 
             Hairline()

@@ -535,6 +535,25 @@ struct UsageCoreSelfTest {
             check(helperExited, "CLILoginSupervisor must exit promptly on Terminal close")
         }
 
+        runner.runCase("Formatting: USD/CNY grouped formatting and FXRates parser") {
+            check(DisplayCurrency.allCases == [.usd, .cny], "Expected USD and CNY display currencies")
+            check(UsageFormatter.money(1234.56, currency: .usd, ratePerUSD: 1.0) == "$1,234.56", "USD grouped formatting")
+            check(UsageFormatter.money(100, currency: .cny, ratePerUSD: 7.2) == "¥720.00", "CNY conversion formatting")
+            check(UsageFormatter.money(2000, currency: .cny, ratePerUSD: 7.2) == "¥14,400", "Amounts >= 10,000 omit decimals")
+
+            let fxJSON = Data(#"{"amount":1.0,"base":"USD","date":"2026-11-24","rates":{"CNY":7.21,"EUR":0.93}}"#.utf8)
+            let rates = try FXRates.perUSD(fromFrankfurter: fxJSON)
+            check(rates["USD"] == 1.0, "FXRates must include USD=1.0")
+            check(rates["CNY"] == 7.21 && rates["EUR"] == 0.93, "FXRates must parse Frankfurter payload")
+
+            let shares = UsageFormatter.apportionedShares([50.0, 30.0, 20.0])
+            check(shares == ["50%", "30%", "20%"], "Clean integer shares omit decimal")
+            let tenths = UsageFormatter.apportionLargestRemainder([1.0, 1.0, 1.0], total: 1000)
+            check(tenths.reduce(0, +) == 1000, "Apportioned tenths must sum to 1000 (100.0%)")
+            let splitMoney = UsageFormatter.apportionedMoney(totalUSD: 10.0, partsUSD: [3.333, 3.333, 3.334], currency: .usd, ratePerUSD: 1.0)
+            check(splitMoney == ["$3.33", "$3.33", "$3.34"], "Apportioned money must sum exactly to displayed total")
+        }
+
         print("Summary: \(runner.passed) assertions passed, \(runner.failed) failed.")
         if runner.failed > 0 {
             exit(1)
