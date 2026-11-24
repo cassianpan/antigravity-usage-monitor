@@ -488,11 +488,16 @@ struct PanelView: View {
                 HStack {
                     if isHovered, let safePct = bucket.safeLinePercentageInt, !bucket.isResetElapsed {
                         let headroomPct = max(0, safePct - bucket.usedPercentageInt)
-                        Text(
-                            bucket.isOverPace
-                                ? "\(l10n.safeLine)\(safePct)% · \(l10n.zh ? "已超速" : "Over pace")"
-                                : "\(l10n.safeLine)\(safePct)% · \(l10n.zh ? "安全余量 " : "Headroom ")\(headroomPct)%"
-                        )
+                        let paceText: String = {
+                            if bucket.isPaceSettling {
+                                return "\(l10n.safeLine)\(safePct)% · \(l10n.zh ? "刚开启周期" : "Settling")"
+                            }
+                            if bucket.isOverPace {
+                                return "\(l10n.safeLine)\(safePct)% · \(l10n.zh ? "已超速" : "Over pace")"
+                            }
+                            return "\(l10n.safeLine)\(safePct)% · \(l10n.zh ? "安全余量 " : "Headroom ")\(headroomPct)%"
+                        }()
+                        Text(paceText)
                         .font(.system(size: 10.5))
                         .foregroundStyle(bucket.isOverPace ? Palette.critical : Palette.secondary)
                         .lineLimit(1)

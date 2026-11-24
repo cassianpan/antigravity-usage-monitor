@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-24
+
+### Fixed
+
+- **5-hour safe line settling buffer (first 30 minutes)**: Added the same 10% (`30 min`) settling phase as `claude-usage-monitor` at the start of each 5-hour window. Using 1%–5% right after a window opens no longer turns the bar red or triggers false over-pace warnings; hovering shows **Settling** until the window passes 30 minutes.
+
 ## [0.1.4] - 2026-11-24
 
 ### Added

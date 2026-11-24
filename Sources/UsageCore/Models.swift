@@ -484,6 +484,9 @@ public struct QuotaBucketEvaluation: Sendable, Equatable, Identifiable {
     public let remainingFraction: Double
     /// Safe pace line in [0, 1], if window duration and reset time are known.
     public let safeLineFraction: Double?
+    /// True during the initial settling phase of a 5-hour window (first 10% / 30 min),
+    /// where low safe lines should not trigger over-pace warnings.
+    public let isPaceSettling: Bool
     public let resetTime: Date?
     public let remainingSecondsUntilReset: TimeInterval?
     public let isResetElapsed: Bool
@@ -496,6 +499,7 @@ public struct QuotaBucketEvaluation: Sendable, Equatable, Identifiable {
         usedFraction: Double,
         remainingFraction: Double,
         safeLineFraction: Double?,
+        isPaceSettling: Bool = false,
         resetTime: Date?,
         remainingSecondsUntilReset: TimeInterval?,
         isResetElapsed: Bool,
@@ -507,6 +511,7 @@ public struct QuotaBucketEvaluation: Sendable, Equatable, Identifiable {
         self.usedFraction = usedFraction
         self.remainingFraction = remainingFraction
         self.safeLineFraction = safeLineFraction
+        self.isPaceSettling = isPaceSettling
         self.resetTime = resetTime
         self.remainingSecondsUntilReset = remainingSecondsUntilReset
         self.isResetElapsed = isResetElapsed
@@ -528,7 +533,7 @@ public struct QuotaBucketEvaluation: Sendable, Equatable, Identifiable {
     }
 
     public var isOverPace: Bool {
-        guard let safePct = safeLinePercentageInt, !isResetElapsed else { return false }
+        guard !isPaceSettling, let safePct = safeLinePercentageInt, !isResetElapsed else { return false }
         return usedPercentageInt > safePct
     }
 }

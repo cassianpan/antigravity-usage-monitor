@@ -76,7 +76,7 @@ public struct QuotaEvaluator: Sendable {
                 let effectiveRemaining = isResetElapsed ? 1.0 : rawRemaining
                 let effectiveUsed = isResetElapsed ? 0.0 : Self.clamp01(1.0 - rawRemaining)
 
-                let safeLine = Self.computeSafeLine(
+                let pace = Self.computeSafeLine(
                     windowKind: kind,
                     resetDate: resetDate,
                     now: now,
@@ -90,7 +90,8 @@ public struct QuotaEvaluator: Sendable {
                         windowKind: kind,
                         usedFraction: effectiveUsed,
                         remainingFraction: effectiveRemaining,
-                        safeLineFraction: safeLine,
+                        safeLineFraction: pace?.fraction,
+                        isPaceSettling: pace?.settling ?? false,
                         resetTime: resetDate,
                         remainingSecondsUntilReset: remainingSeconds,
                         isResetElapsed: isResetElapsed,
@@ -161,27 +162,33 @@ public struct QuotaEvaluator: Sendable {
         return .other
     }
 
+    /// First 10% (30 minutes) of a 5-hour window is treated as a settling phase
+    /// so initial bursts do not trigger false over-pace warnings (matching claude-usage-monitor).
+    public static let fiveHourSettlingShare: Double = 0.1
+
     public static func computeSafeLine(
         windowKind: QuotaWindowKind,
         resetDate: Date?,
         now: Date,
         isResetElapsed: Bool
-    ) -> Double? {
+    ) -> (fraction: Double, settling: Bool)? {
         guard !isResetElapsed, let resetDate, let duration = windowKind.durationSeconds else {
             return nil
         }
 
         let windowStart = resetDate.addingTimeInterval(-duration)
         let elapsed = now.timeIntervalSince(windowStart)
-        guard elapsed >= 0 else { return 0 }
+        guard elapsed >= 0 else { return (0, windowKind == .fiveHour) }
 
         switch windowKind {
         case .fiveHour:
-            return clamp01(elapsed / duration)
+            let frac = clamp01(elapsed / duration)
+            let settling = elapsed < duration * fiveHourSettlingShare
+            return (frac, settling)
         case .weekly:
             // Mirrors claude-usage-monitor: weekly safe line advances 1/7 per elapsed day.
             let dayIndex = min(7.0, floor(elapsed / (24 * 3600)) + 1.0)
-            return clamp01(dayIndex / 7.0)
+            return (clamp01(dayIndex / 7.0), false)
         case .other:
             return nil
         }

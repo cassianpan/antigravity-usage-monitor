@@ -183,6 +183,22 @@ struct UsageCoreSelfTest {
             check(inactiveReport.primaryFiveHour?.resetTime == nil, "Epoch reset_time should normalize to nil")
             check(inactiveReport.primaryFiveHour?.isResetElapsed == false, "Unused bucket must not be marked reset elapsed")
             check(inactiveReport.primaryFiveHour?.remainingPercentageInt == 100, "Remaining % must equal 100 - used %")
+
+            // First 10% (30 min) of 5-hour window is settling -> 1% usage must NOT trigger over-pace warning
+            let settlingSnapshot = StatusLineSnapshot(
+                quota: [
+                    "gemini-5h": StatusLineQuotaBucket(
+                        remainingFraction: 0.985,
+                        resetTime: ISO8601DateFormatter().string(from: now.addingTimeInterval(5 * 3600 - 60)),
+                        resetInSeconds: 17940
+                    ),
+                ],
+                capturedAt: now
+            )
+            let settlingReport = QuotaEvaluator().evaluate(snapshot: settlingSnapshot, now: now)
+            check(settlingReport.primaryFiveHour?.usedPercentageInt == 1, "Expected 1% used")
+            check(settlingReport.primaryFiveHour?.isPaceSettling == true, "First 30 min of 5h window should be settling")
+            check(settlingReport.primaryFiveHour?.isOverPace == false, "Settling window must not trigger over-pace")
         }
 
         runCase("S3: StatusLineBridgeInstaller direct install, script execution, and clean uninstall (D3)") {
