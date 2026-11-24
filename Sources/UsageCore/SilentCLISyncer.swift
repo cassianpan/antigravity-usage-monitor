@@ -8,22 +8,41 @@ public enum SilentSyncResult: Sendable, Equatable {
     case failed(String)
 }
 
-/// Runs `agy --settings '{"statusLine":...}'` silently inside a short-lived PTY
-/// to collect fresh official quota without requiring a permanently open Terminal
-/// or mutating the user's `settings.json`.
+/// Runs `agy --settings <mergedTempSettings.json>` silently inside a short-lived PTY
+/// guarded by a kqueue Pipe-EOF wrapper (or POSIX `/bin/sh` pipe-EOF fallback in tests),
+/// guaranteeing zero orphan `agy` processes even if the parent app receives `SIGKILL`.
 public actor SilentCLISyncer {
     private let snapshotURL: URL
     private let evaluator: QuotaEvaluator
+    private let wrapperExecutableURL: URL?
     private var isRunning = false
     private var activeChildPID: Int32?
 
     public init(
         snapshotURL: URL = StatusLineBridgeInstaller.defaultCLIConfigDirectory
             .appendingPathComponent("usage-monitor-snapshot.json"),
-        evaluator: QuotaEvaluator = QuotaEvaluator()
+        evaluator: QuotaEvaluator = QuotaEvaluator(),
+        wrapperExecutableURL: URL? = SilentCLISyncer.resolveAppExecutableURL()
     ) {
         self.snapshotURL = snapshotURL
         self.evaluator = evaluator
+        self.wrapperExecutableURL = wrapperExecutableURL
+    }
+
+    public nonisolated static func resolveAppExecutableURL() -> URL? {
+        if let url = Bundle.main.executableURL,
+           url.lastPathComponent == "AntigravityUsageMonitor",
+           FileManager.default.isExecutableFile(atPath: url.path) {
+            return url
+        }
+        if let arg0 = CommandLine.arguments.first {
+            let url = URL(fileURLWithPath: arg0).standardizedFileURL
+            if url.lastPathComponent == "AntigravityUsageMonitor",
+               FileManager.default.isExecutableFile(atPath: url.path) {
+                return url
+            }
+        }
+        return nil
     }
 
     public nonisolated static func locateAgyBinary() -> URL? {
@@ -54,11 +73,14 @@ public actor SilentCLISyncer {
         activeChildPID
     }
 
-    public func sync(timeoutSeconds: TimeInterval = 12.0) async -> SilentSyncResult {
+    public func sync(
+        timeoutSeconds: TimeInterval = 12.0,
+        agyBinaryOverride: URL? = nil
+    ) async -> SilentSyncResult {
         guard !isRunning else {
             return .failed("Sync already in progress")
         }
-        guard let agyURL = Self.locateAgyBinary() else {
+        guard let agyURL = agyBinaryOverride ?? Self.locateAgyBinary() else {
             return .cliNotFound
         }
 
@@ -69,7 +91,11 @@ public actor SilentCLISyncer {
         }
 
         let fm = FileManager.default
-        let tempDir = fm.temporaryDirectory.appendingPathComponent("agy-silent-sync-\(UUID().uuidString)", isDirectory: true)
+        let ownerPID = getpid()
+        let tempDir = fm.temporaryDirectory.appendingPathComponent(
+            "agy-silent-sync-\(ownerPID)-\(UUID().uuidString)",
+            isDirectory: true
+        )
         do {
             try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
         } catch {
@@ -78,34 +104,12 @@ public actor SilentCLISyncer {
         defer { try? fm.removeItem(at: tempDir) }
 
         let tempSnapshotURL = tempDir.appendingPathComponent("probe.json")
-        let tempScriptURL = tempDir.appendingPathComponent("probe.sh")
-        let escapedTempSnap = "'" + tempSnapshotURL.path.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
-        let scriptContent = """
-        #!/bin/sh
-        set -eu
-        OUT=\(escapedTempSnap)
-        TMP="${OUT}.tmp.$$"
-        cat > "$TMP"
-        mv -f "$TMP" "$OUT"
-        exit 0
-        """
+        let settingsURL: URL
         do {
-            try scriptContent.write(to: tempScriptURL, atomically: true, encoding: .utf8)
-            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tempScriptURL.path)
+            let probeScriptURL = try CLIProbeSupport.writeProbeScript(outputURL: tempSnapshotURL, into: tempDir)
+            settingsURL = try CLIProbeSupport.writeMergedSettings(probeScriptURL: probeScriptURL, into: tempDir)
         } catch {
-            return .failed("无法写入临时探测脚本：\(error.localizedDescription)")
-        }
-
-        let settingsDict: [String: Any] = [
-            "statusLine": [
-                "type": "command",
-                "command": tempScriptURL.path,
-                "enabled": true,
-            ]
-        ]
-        guard let settingsData = try? JSONSerialization.data(withJSONObject: settingsDict),
-              let settingsJSON = String(data: settingsData, encoding: .utf8) else {
-            return .failed("序列化临时配置失败")
+            return .failed("无法准备临时探测配置：\(error.localizedDescription)")
         }
 
         var masterFD: Int32 = -1
@@ -115,57 +119,198 @@ public actor SilentCLISyncer {
             return .failed("无法分配后台伪终端 (openpty)")
         }
 
-        // Prevent master FD from blocking if child writes terminal output.
-        let flags = fcntl(masterFD, F_GETFL)
-        if flags >= 0 {
-            _ = fcntl(masterFD, F_SETFL, flags | O_NONBLOCK)
+        let masterFlags = fcntl(masterFD, F_GETFL)
+        if masterFlags >= 0 {
+            _ = fcntl(masterFD, F_SETFL, masterFlags | O_NONBLOCK)
         }
 
-        let slaveHandle = FileHandle(fileDescriptor: slaveFD, closeOnDealloc: false)
-        let process = Process()
-        process.executableURL = agyURL
-        process.arguments = ["--settings", settingsJSON]
-        process.currentDirectoryURL = tempDir
-        process.standardInput = slaveHandle
-        process.standardOutput = slaveHandle
-        process.standardError = slaveHandle
+        var wdPipe: [Int32] = [-1, -1]
+        guard pipe(&wdPipe) == 0 else {
+            _ = close(slaveFD)
+            _ = close(masterFD)
+            return .failed("无法创建看门狗管道")
+        }
+        let wdReadFD = wdPipe[0]
+        var wdWriteFD = wdPipe[1]
 
-        var env = ProcessInfo.processInfo.environment
-        let home = fm.homeDirectoryForCurrentUser.path
-        let extraPaths = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        if let existingPath = env["PATH"], !existingPath.isEmpty {
-            env["PATH"] = "\(extraPaths):\(existingPath)"
+        var wrapperPID: pid_t = -1
+        var agyPID: pid_t = -1
+        let usingNativeWrapper: Bool
+
+        if let wrapperURL = wrapperExecutableURL, fm.isExecutableFile(atPath: wrapperURL.path) {
+            usingNativeWrapper = true
+            var pidPipe: [Int32] = [-1, -1]
+            guard pipe(&pidPipe) == 0 else {
+                _ = close(wdReadFD); _ = close(wdWriteFD)
+                _ = close(slaveFD); _ = close(masterFD)
+                return .failed("无法创建 PID 通道")
+            }
+            let pidReadFD = pidPipe[0]
+            let pidWriteFD = pidPipe[1]
+
+            do {
+                wrapperPID = try PosixSpawn.spawn(
+                    PosixSpawn.Options(
+                        executable: wrapperURL.path,
+                        arguments: [
+                            AgySyncWrapper.flag,
+                            "--agy", agyURL.path,
+                            "--settings", settingsURL.path,
+                            "--cwd", tempDir.path,
+                            "--timeout", String(format: "%.1f", timeoutSeconds),
+                            "--watchdog-fd", "3",
+                            "--pid-fd", "4",
+                        ],
+                        environment: CLIProbeSupport.defaultEnvironment(),
+                        dup2Map: [
+                            (slaveFD, STDIN_FILENO),
+                            (slaveFD, STDOUT_FILENO),
+                            (slaveFD, STDERR_FILENO),
+                            (wdReadFD, 3),
+                            (pidWriteFD, 4),
+                        ],
+                        setProcessGroup: true,
+                        startSuspended: false,
+                        closeOnExecDefault: true
+                    )
+                )
+            } catch {
+                _ = close(pidReadFD); _ = close(pidWriteFD)
+                _ = close(wdReadFD); _ = close(wdWriteFD)
+                _ = close(slaveFD); _ = close(masterFD)
+                return .failed("启动同步监督器失败：\(error.localizedDescription)")
+            }
+
+            _ = close(slaveFD)
+            _ = close(wdReadFD)
+            _ = close(pidWriteFD)
+
+            ActiveSyncProcessRegistry.shared.register(
+                wrapperPID: wrapperPID,
+                agyPGID: nil,
+                watchdogWriteFD: wdWriteFD
+            )
+
+            // Read child agy PID from pidReadFD (bounded wait).
+            if let reportedPID = Self.readPIDLine(from: pidReadFD, timeoutMs: 2000) {
+                agyPID = reportedPID
+                ActiveSyncProcessRegistry.shared.updateAgyPGID(wrapperPID: wrapperPID, agyPGID: agyPID)
+            }
+            _ = close(pidReadFD)
         } else {
-            env["PATH"] = extraPaths
-        }
-        env["TERM"] = "xterm-256color"
-        env["HOME"] = home
-        process.environment = env
+            // Library / unit-test fallback: `/bin/sh` blocks on watchdog pipe EOF and kills -agyPGID.
+            usingNativeWrapper = false
+            do {
+                wrapperPID = try PosixSpawn.spawn(
+                    PosixSpawn.Options(
+                        executable: "/bin/sh",
+                        arguments: [
+                            "-c",
+                            "IFS= read -r pgid || exit 0; IFS= read -r _ || true; /bin/kill -KILL -\"$pgid\" 2>/dev/null || true",
+                        ],
+                        environment: CLIProbeSupport.defaultEnvironment(),
+                        dup2Map: [(wdReadFD, STDIN_FILENO)],
+                        setProcessGroup: true,
+                        startSuspended: false,
+                        closeOnExecDefault: true
+                    )
+                )
 
-        do {
-            try process.run()
-        } catch {
-            close(slaveFD)
-            close(masterFD)
-            return .failed("启动 agy 失败：\(error.localizedDescription)")
+                var env = CLIProbeSupport.defaultEnvironment()
+                env["TERM"] = "xterm-256color"
+                agyPID = try PosixSpawn.spawn(
+                    PosixSpawn.Options(
+                        executable: agyURL.path,
+                        arguments: ["--settings", settingsURL.path],
+                        environment: env,
+                        dup2Map: [
+                            (slaveFD, STDIN_FILENO),
+                            (slaveFD, STDOUT_FILENO),
+                            (slaveFD, STDERR_FILENO),
+                        ],
+                        setProcessGroup: true,
+                        startSuspended: false,
+                        closeOnExecDefault: true
+                    )
+                )
+            } catch {
+                if wrapperPID > 0 { _ = kill(wrapperPID, SIGKILL) }
+                _ = close(wdReadFD); _ = close(wdWriteFD)
+                _ = close(slaveFD); _ = close(masterFD)
+                return .failed("启动 agy 失败：\(error.localizedDescription)")
+            }
+
+            _ = close(slaveFD)
+            _ = close(wdReadFD)
+
+            let line = "\(agyPID)\n"
+            line.withCString { cstr in
+                _ = write(wdWriteFD, cstr, strlen(cstr))
+            }
+
+            ActiveSyncProcessRegistry.shared.register(
+                wrapperPID: wrapperPID,
+                agyPGID: agyPID,
+                watchdogWriteFD: wdWriteFD
+            )
         }
 
-        // Parent closes slave side immediately.
-        close(slaveFD)
-        activeChildPID = process.processIdentifier
+        activeChildPID = agyPID > 0 ? agyPID : wrapperPID
 
         defer {
-            if process.isRunning {
-                process.terminate()
-                let killDeadline = Date().addingTimeInterval(1.5)
-                while process.isRunning && Date() < killDeadline {
-                    usleep(50_000)
+            if usingNativeWrapper {
+                // Signal graceful stop ("G") then close pipe.
+                if wdWriteFD >= 0 {
+                    var marker: UInt8 = UInt8(ascii: "G")
+                    _ = write(wdWriteFD, &marker, 1)
+                    _ = close(wdWriteFD)
+                    wdWriteFD = -1
                 }
-                if process.isRunning {
-                    kill(process.processIdentifier, SIGKILL)
+                let reapDeadline = Date().addingTimeInterval(0.35)
+                var st: Int32 = 0
+                var exited = false
+                while Date() < reapDeadline {
+                    if waitpid(wrapperPID, &st, WNOHANG) == wrapperPID {
+                        exited = true
+                        break
+                    }
+                    usleep(20_000)
+                }
+                if !exited {
+                    if agyPID > 0 { _ = kill(-agyPID, SIGKILL) }
+                    _ = kill(wrapperPID, SIGKILL)
+                    _ = waitpid(wrapperPID, &st, 0)
+                } else if agyPID > 0 {
+                    _ = kill(-agyPID, SIGKILL)
+                }
+            } else {
+                if wdWriteFD >= 0 {
+                    _ = close(wdWriteFD)
+                    wdWriteFD = -1
+                }
+                if agyPID > 0 {
+                    _ = kill(agyPID, SIGTERM)
+                    let killDeadline = Date().addingTimeInterval(0.15)
+                    var st: Int32 = 0
+                    while Date() < killDeadline {
+                        if waitpid(agyPID, &st, WNOHANG) == agyPID { break }
+                        usleep(20_000)
+                    }
+                    _ = kill(-agyPID, SIGKILL)
+                    _ = waitpid(agyPID, &st, WNOHANG)
+                }
+                if wrapperPID > 0 {
+                    var st: Int32 = 0
+                    if waitpid(wrapperPID, &st, WNOHANG) != wrapperPID {
+                        _ = kill(wrapperPID, SIGKILL)
+                        _ = waitpid(wrapperPID, &st, 0)
+                    }
                 }
             }
-            close(masterFD)
+
+            ActiveSyncProcessRegistry.shared.unregister(wrapperPID: wrapperPID)
+            activeChildPID = nil
+            _ = close(masterFD)
         }
 
         let deadline = Date().addingTimeInterval(timeoutSeconds)
@@ -176,7 +321,6 @@ public actor SilentCLISyncer {
         var drainBuffer = [UInt8](repeating: 0, count: 4096)
 
         while Date() < deadline {
-            // Drain PTY output so child never blocks on full tty buffer.
             while read(masterFD, &drainBuffer, drainBuffer.count) > 0 {}
 
             if fm.fileExists(atPath: tempSnapshotURL.path),
@@ -193,8 +337,6 @@ public actor SilentCLISyncer {
                         break
                     }
                 } else if parsed.agentState == "authenticating" && (parsed.email?.isEmpty ?? true) {
-                    // `agy` briefly reports `authenticating` while validating cached tokens on startup.
-                    // Only treat it as interactive sign-in required if it stays stuck without quota/email.
                     if firstAuthAt == nil {
                         firstAuthAt = Date()
                     } else if Date().timeIntervalSince(firstAuthAt!) >= 5.0 {
@@ -206,9 +348,13 @@ public actor SilentCLISyncer {
                 }
             }
 
-            if !process.isRunning {
+            // Check if child exited early.
+            var status: Int32 = 0
+            let monitoredPID = usingNativeWrapper ? wrapperPID : agyPID
+            if monitoredPID > 0, waitpid(monitoredPID, &status, WNOHANG) == monitoredPID {
                 break
             }
+
             try? await Task.sleep(for: .milliseconds(200))
         }
 
@@ -220,32 +366,120 @@ public actor SilentCLISyncer {
             return .failed("超时未获取到官方额度，请确认 agy CLI 已登录")
         }
 
-        // Persist atomically to snapshotURL, preserving previous planTier if new payload omitted it.
-        let previous = evaluator.loadSnapshot(from: snapshotURL)
-        let merged = StatusLineSnapshot(
-            conversationId: captured.conversationId ?? previous?.conversationId,
-            conversationTitle: captured.conversationTitle ?? previous?.conversationTitle,
-            model: captured.model ?? previous?.model,
-            version: captured.version ?? previous?.version,
-            contextWindow: captured.contextWindow ?? previous?.contextWindow,
-            quota: quota,
-            agentState: captured.agentState,
-            planTier: (captured.planTier?.isEmpty == false) ? captured.planTier : previous?.planTier,
-            email: (captured.email?.isEmpty == false) ? captured.email : previous?.email,
-            cost: captured.cost ?? previous?.cost,
-            capturedAt: Date()
-        )
-
         do {
-            try fm.createDirectory(at: snapshotURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            let data = try encoder.encode(merged)
-            try data.write(to: snapshotURL, options: .atomic)
+            let merged = try CLIProbeSupport.persistSnapshot(captured, to: snapshotURL, evaluator: evaluator)
+            return .synced(merged)
         } catch {
             return .failed("保存官方快照失败：\(error.localizedDescription)")
         }
+    }
 
-        return .synced(merged)
+    // MARK: - Startup Orphan Probe Sweeper
+
+    /// Sweeps leftover `agy` processes spawned by previous crashed/killed `SilentCLISyncer` runs
+    /// (strictly identified by `agy-silent-sync-` in argv and dead owner PID or `ppid == 1`).
+    /// Never touches normal user `agy` sessions.
+    public nonisolated static func sweepOrphanedProbes(excludingCurrentPID currentPID: Int32 = getpid()) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/ps")
+        task.arguments = ["-axo", "pid=,ppid=,ucomm="]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        guard (try? task.run()) != nil else { return }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+
+        if let output = String(data: data, encoding: .utf8) {
+            for line in output.split(whereSeparator: \.isNewline) {
+                let parts = line.trimmingCharacters(in: .whitespaces).split(maxSplits: 2, whereSeparator: \.isWhitespace)
+                guard parts.count >= 3,
+                      let pid = Int32(parts[0]),
+                      let ppid = Int32(parts[1]) else { continue }
+                let comm = String(parts[2]).lowercased()
+                guard comm == "agy" else { continue }
+                guard let args = readProcessArgs(pid: pid) else { continue }
+                let joined = args.joined(separator: " ")
+                guard joined.contains("agy-silent-sync-") else { continue }
+
+                var shouldKill = (ppid == 1)
+                if !shouldKill, let ownerPID = extractOwnerPID(from: joined) {
+                    if ownerPID != currentPID && kill(ownerPID, 0) != 0 && errno == ESRCH {
+                        shouldKill = true
+                    }
+                }
+                if shouldKill {
+                    _ = kill(pid, SIGKILL)
+                }
+            }
+        }
+
+        // Clean stale temporary probe directories older than 1 hour.
+        let fm = FileManager.default
+        let tempRoot = fm.temporaryDirectory
+        if let items = try? fm.contentsOfDirectory(
+            at: tempRoot,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            let cutoff = Date().addingTimeInterval(-3600)
+            for item in items where item.lastPathComponent.hasPrefix("agy-silent-sync-") {
+                if let attrs = try? item.resourceValues(forKeys: [.contentModificationDateKey]),
+                   let mtime = attrs.contentModificationDate,
+                   mtime < cutoff {
+                    try? fm.removeItem(at: item)
+                }
+            }
+        }
+    }
+
+    private nonisolated static func extractOwnerPID(from commandLine: String) -> Int32? {
+        guard let range = commandLine.range(of: "agy-silent-sync-") else { return nil }
+        let suffix = commandLine[range.upperBound...]
+        let digits = suffix.prefix(while: { $0.isNumber })
+        guard !digits.isEmpty else { return nil }
+        return Int32(digits)
+    }
+
+    private nonisolated static func readPIDLine(from fd: Int32, timeoutMs: Int32) -> pid_t? {
+        var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        let pr = poll(&pfd, 1, timeoutMs)
+        guard pr > 0 else { return nil }
+        var buf = [UInt8](repeating: 0, count: 64)
+        let n = read(fd, &buf, buf.count)
+        guard n > 0 else { return nil }
+        let str = String(decoding: buf[0..<n], as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return pid_t(str)
+    }
+
+    private nonisolated static func readProcessArgs(pid: Int32) -> [String]? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else {
+            return nil
+        }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else {
+            return nil
+        }
+        var argc: Int32 = 0
+        _ = withUnsafeMutableBytes(of: &argc) { dst in
+            buffer.withUnsafeBytes { src in
+                memcpy(dst.baseAddress!, src.baseAddress!, MemoryLayout<Int32>.size)
+            }
+        }
+        guard argc > 0 else { return nil }
+
+        var index = MemoryLayout<Int32>.size
+        while index < size, buffer[index] != 0 { index += 1 }
+        while index < size, buffer[index] == 0 { index += 1 }
+        var args: [String] = []
+        while args.count < argc, index < size {
+            let start = index
+            while index < size, buffer[index] != 0 { index += 1 }
+            args.append(String(decoding: buffer[start..<index], as: UTF8.self))
+            index += 1
+        }
+        return args
     }
 }

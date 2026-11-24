@@ -1,11 +1,37 @@
 import AppKit
+import Darwin
 import Foundation
 import UsageCore
 
 struct RunningProcessInfo: Identifiable, Sendable, Equatable {
     let id: Int32
+    let memberPIDs: [Int32]
     let name: String
+    let detail: String?
     let kind: String
+    let tty: String?
+    let isDetached: Bool
+    let memoryBytes: Int64
+
+    init(
+        id: Int32,
+        memberPIDs: [Int32] = [],
+        name: String,
+        detail: String? = nil,
+        kind: String,
+        tty: String? = nil,
+        isDetached: Bool = false,
+        memoryBytes: Int64 = 0
+    ) {
+        self.id = id
+        self.memberPIDs = memberPIDs.isEmpty ? [id] : memberPIDs
+        self.name = name
+        self.detail = detail
+        self.kind = kind
+        self.tty = tty
+        self.isDetached = isDetached
+        self.memoryBytes = memoryBytes
+    }
 }
 
 struct MenuBarColumnItem: Identifiable, Equatable {
@@ -57,6 +83,7 @@ final class UsageMonitorStore {
     var officialReport: OfficialQuotaReport = OfficialQuotaReport()
     var bridgeStatus: BridgeStatus = .notInstalled(existingCommand: nil)
     var runningProcesses: [RunningProcessInfo] = []
+    var terminatingProcessIds: Set<Int32> = []
     var bridgeFeedback: String?
     var isRefreshing: Bool = false
     var isSyncingOfficial: Bool = false
@@ -116,6 +143,7 @@ final class UsageMonitorStore {
     var onSyncStateChanged: ((Bool) -> Void)?
 
     private var timer: Timer?
+    private var loginTerminalWatchTask: Task<Void, Never>?
     private var directoryWatcher: DispatchSourceFileSystemObject?
     private var watchedFD: Int32 = -1
     private var watcherDebounceTask: Task<Void, Never>?
@@ -363,15 +391,7 @@ final class UsageMonitorStore {
         let evaluator = quotaEvaluator
         let installer = bridgeInstaller
         let billingDay = preferences.billingDay > 0 ? preferences.billingDay : nil
-
-        // Capture running GUI apps on main thread (NSWorkspace is fast in-memory),
-        // then run pgrep + file I/O + JSON parsing on a background utility task.
-        let guiApps: [RunningProcessInfo] = NSWorkspace.shared.runningApplications.compactMap { app in
-            guard let name = app.localizedName else { return nil }
-            let lower = name.lowercased()
-            guard lower.contains("antigravity") && !lower.contains("usage monitor") else { return nil }
-            return RunningProcessInfo(id: app.processIdentifier, name: name, kind: "App")
-        }
+        let selfPid = Int32(ProcessInfo.processInfo.processIdentifier)
 
         refreshTask = Task { [weak self] in
             let payload: RefreshPayload = await Task.detached(priority: .utility) {
@@ -388,13 +408,13 @@ final class UsageMonitorStore {
                     officialWeeklyResetTime: official.primaryWeekly?.resetTime,
                     billingDay: billingDay
                 )
-                let cliProcs = Self.detectAgyCLIProcesses()
+                let procs = Self.detectRunningProcesses(excluding: selfPid)
                 return RefreshPayload(
                     bridgeStatus: status,
                     cliBinaryPath: cliPath,
                     officialReport: official,
                     localReport: local,
-                    runningProcesses: guiApps + cliProcs
+                    runningProcesses: procs
                 )
             }.value
 
@@ -406,6 +426,15 @@ final class UsageMonitorStore {
             self.officialReport = payload.officialReport
             self.localReport = payload.localReport
             self.runningProcesses = payload.runningProcesses
+
+            if payload.officialReport.hasSnapshot,
+               (payload.officialReport.primaryFiveHour != nil || payload.officialReport.primaryWeekly != nil),
+               let age = payload.officialReport.staleAgeSeconds, age < 120 {
+                if self.officialAuthRequired {
+                    self.officialAuthRequired = false
+                    self.bridgeFeedback = nil
+                }
+            }
 
             if let weekly = payload.officialReport.primaryWeekly,
                !weekly.isResetElapsed,
@@ -479,19 +508,29 @@ final class UsageMonitorStore {
     }
 
     func openTerminalToConnectCLI() {
-        let terminalCommand = """
-        export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; \
-        clear; echo "=== Antigravity Usage Monitor · agy CLI Sign-in ==="; echo ""; \
-        if command -v agy >/dev/null 2>&1; then \
-          echo "Complete sign-in in agy below. Once signed in, you can quit agy (Ctrl+D) and close this window."; \
-          echo "The menu bar app will refresh official limits automatically in the background."; \
-          echo ""; \
-          agy; \
-        else \
-          echo "agy CLI not found in PATH."; \
-          echo "Install Antigravity CLI first, then run 'agy' to sign in."; \
-        fi
-        """
+        let isChinese = preferences.language.isChinese
+        let snapshotPath = bridgeInstaller.snapshotURL.path
+        let doneFileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agy-login-done-\(UUID().uuidString)")
+        try? FileManager.default.removeItem(at: doneFileURL)
+
+        func shQuote(_ value: String) -> String {
+            "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
+        }
+
+        let usingSupervisor: Bool
+        let terminalCommand: String
+        if let appExec = SilentCLISyncer.resolveAppExecutableURL() {
+            usingSupervisor = true
+            let langFlag = isChinese ? "zh" : "en"
+            terminalCommand = "clear; exec \(shQuote(appExec.path)) \(CLILoginSupervisor.flag) --snapshot \(shQuote(snapshotPath)) --lang \(langFlag) --done-file \(shQuote(doneFileURL.path))"
+        } else {
+            usingSupervisor = false
+            terminalCommand = """
+            export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; \
+            clear; agy
+            """
+        }
 
         let escaped = terminalCommand
             .replacingOccurrences(of: "\\", with: "\\\\")
@@ -501,19 +540,151 @@ final class UsageMonitorStore {
         tell application "Terminal"
             activate
             do script "\(escaped)"
+            return id of front window
         end tell
         """
 
-        Task.detached(priority: .userInitiated) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-e", appleScript]
-            try? process.run()
-        }
+        bridgeFeedback = isChinese
+            ? "正在打开终端启动 agy 登录监督器…"
+            : "Opening Terminal with agy sign-in supervisor…"
 
-        bridgeFeedback = preferences.language.isChinese
-            ? "已打开终端启动 agy。完成登录后即可关闭终端，App 会在后台自动刷新官方额度。"
-            : "Opened Terminal with agy. After signing in you can close Terminal — limits sync automatically in the background."
+        loginTerminalWatchTask?.cancel()
+        loginTerminalWatchTask = Task { [weak self] in
+            let launchResult: (windowId: Int?, errorMessage: String?) = await Task.detached(priority: .userInitiated) {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                process.arguments = ["-e", appleScript]
+                let outPipe = Pipe()
+                let errPipe = Pipe()
+                process.standardOutput = outPipe
+                process.standardError = errPipe
+
+                do {
+                    try process.run()
+                    let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+                    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                    process.waitUntilExit()
+                    if process.terminationStatus != 0 {
+                        let stderrText = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        let msg = isChinese
+                            ? "无法自动打开终端（请检查「系统设置 → 隐私与安全性 → 自动化」中是否允许控制 Terminal）：\(stderrText)"
+                            : "Failed to open Terminal (check System Settings → Privacy & Security → Automation): \(stderrText)"
+                        return (nil, msg)
+                    }
+                    let outText = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    return (Int(outText), nil)
+                } catch {
+                    let msg = isChinese
+                        ? "启动 osascript 失败：\(error.localizedDescription)"
+                        : "Failed to run osascript: \(error.localizedDescription)"
+                    return (nil, msg)
+                }
+            }.value
+
+            guard !Task.isCancelled, let self else { return }
+            if let errorMessage = launchResult.errorMessage {
+                self.bridgeFeedback = errorMessage
+                return
+            }
+
+            self.bridgeFeedback = isChinese
+                ? "已打开终端。完成登录后将自动同步并关闭窗口；中途关窗也不会残留后台进程。"
+                : "Opened Terminal. Sign-in auto-syncs and closes the window; closing early leaves no orphan process."
+
+            guard usingSupervisor, let windowId = launchResult.windowId else { return }
+
+            // Poll doneFile for up to 10 minutes; auto-close ONLY this exact Terminal window on success.
+            let deadline = Date().addingTimeInterval(600)
+            while !Task.isCancelled && Date() < deadline {
+                if let status = try? String(contentsOf: doneFileURL, encoding: .utf8)
+                    .trimmingCharacters(in: .whitespacesAndNewlines) {
+                    try? FileManager.default.removeItem(at: doneFileURL)
+                    if status == "ok" {
+                        // Brief pause so user sees the green checkmark and helper process fully exits before closing window.
+                        try? await Task.sleep(for: .milliseconds(800))
+                        guard !Task.isCancelled else { return }
+                        await Task.detached(priority: .utility) {
+                            let closeScript = """
+                            tell application "Terminal"
+                                repeat with w in windows
+                                    if id of w is \(windowId) then
+                                        if (count of tabs of w) is 1 then
+                                            close w saving no
+                                        end if
+                                        exit repeat
+                                    end if
+                                end repeat
+                            end tell
+                            """
+                            let proc = Process()
+                            proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                            proc.arguments = ["-e", closeScript]
+                            proc.standardOutput = FileHandle.nullDevice
+                            proc.standardError = FileHandle.nullDevice
+                            try? proc.run()
+                            proc.waitUntilExit()
+                        }.value
+
+                        self.officialAuthRequired = false
+                        self.bridgeFeedback = nil
+                        self.refreshNow()
+                    }
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            try? FileManager.default.removeItem(at: doneFileURL)
+        }
+    }
+
+    func terminateProcess(_ proc: RunningProcessInfo) {
+        guard !terminatingProcessIds.contains(proc.id) else { return }
+        terminatingProcessIds.insert(proc.id)
+        let isDesktopApp = proc.kind == "App"
+        let rootPID = proc.id
+        let knownMembers = proc.memberPIDs
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            // 1) Re-sample live subtree so we don't miss freshly spawned helpers or kill stale PIDs.
+            let liveSubtree = Self.collectLiveSubtreePIDs(rootPID: rootPID, seedMembers: knownMembers)
+            let stampedTargets: [(pid: Int32, startSec: UInt64, startUsec: UInt64)] = liveSubtree.compactMap { pid in
+                guard let stamp = Self.processStartStamp(pid) else { return nil }
+                return (pid: pid, startSec: stamp.sec, startUsec: stamp.usec)
+            }
+
+            // 2) Graceful terminate first (NSRunningApplication for desktop app, SIGTERM for CLI).
+            if isDesktopApp {
+                _ = await MainActor.run {
+                    NSRunningApplication(processIdentifier: rootPID)?.terminate()
+                }
+            } else {
+                _ = kill(rootPID, SIGTERM)
+            }
+
+            let waitBudget: TimeInterval = isDesktopApp ? 1.2 : 0.3
+            let deadline = Date().addingTimeInterval(waitBudget)
+            while Date() < deadline {
+                let anyAlive = stampedTargets.contains { target in
+                    Self.isSameProcessAlive(pid: target.pid, startSec: target.startSec, startUsec: target.startUsec)
+                }
+                if !anyAlive { break }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+
+            // 3) Force-kill remaining subtree members only if start timestamp still matches (PID-reuse safe).
+            for target in stampedTargets {
+                if Self.isSameProcessAlive(pid: target.pid, startSec: target.startSec, startUsec: target.startUsec) {
+                    _ = kill(target.pid, SIGKILL)
+                }
+            }
+
+            try? await Task.sleep(for: .milliseconds(120))
+            await MainActor.run {
+                guard let self else { return }
+                self.terminatingProcessIds.remove(rootPID)
+                self.refreshNow()
+            }
+        }
     }
 
     func uninstallBridge() {
@@ -596,26 +767,226 @@ final class UsageMonitorStore {
         return columns
     }
 
-    private nonisolated static func detectAgyCLIProcesses() -> [RunningProcessInfo] {
-        var found: [RunningProcessInfo] = []
+    private enum ProcessKind: Equatable {
+        case desktop(main: Bool)
+        case cli
+    }
+
+    private struct RawProcess {
+        let pid: Int32
+        let ppid: Int32
+        let kind: ProcessKind
+        let tty: String?
+        let bytes: Int64
+    }
+
+    /// Groups Antigravity desktop app + helpers into 1 row (with summed memory),
+    /// and lists each real user `agy` CLI session with its working directory, detached state, and memory,
+    /// excluding our own monitor app, XPC services, and background `agy-silent-sync-` probes.
+    private nonisolated static func detectRunningProcesses(excluding selfPid: Int32) -> [RunningProcessInfo] {
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        proc.arguments = ["-x", "agy"]
+        proc.executableURL = URL(fileURLWithPath: "/bin/ps")
+        proc.arguments = ["-axo", "pid=,ppid=,rss=,tty=,ucomm="]
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = FileHandle.nullDevice
-        if (try? proc.run()) != nil {
-            proc.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let output = String(data: data, encoding: .utf8) {
-                for line in output.split(separator: "\n") {
-                    if let pid = Int32(line.trimmingCharacters(in: .whitespaces)) {
-                        found.append(RunningProcessInfo(id: pid, name: "agy CLI", kind: "CLI"))
-                    }
-                }
+        guard (try? proc.run()) != nil else { return [] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        guard let output = String(data: data, encoding: .utf8) else { return [] }
+
+        var raw: [RawProcess] = []
+        for line in output.split(whereSeparator: \.isNewline) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let parts = trimmed.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: true)
+            guard parts.count == 5,
+                  let pid = Int32(parts[0]),
+                  let ppid = Int32(parts[1]),
+                  let rssKB = Int64(parts[2]),
+                  pid != selfPid else { continue }
+            let rawTTY = String(parts[3]).trimmingCharacters(in: .whitespaces)
+            let tty: String? = (rawTTY == "??" || rawTTY == "-" || rawTTY.isEmpty) ? nil : rawTTY
+            let ucomm = String(parts[4]).trimmingCharacters(in: .whitespaces)
+            guard let kind = classifyProcess(pid: pid, ucomm: ucomm) else { continue }
+            raw.append(RawProcess(pid: pid, ppid: ppid, kind: kind, tty: tty, bytes: rssKB * 1024))
+        }
+
+        let ids = Set(raw.map(\.pid))
+        var children: [Int32: [RawProcess]] = [:]
+        var roots: [RawProcess] = []
+        for item in raw {
+            if item.ppid != item.pid && ids.contains(item.ppid) {
+                children[item.ppid, default: []].append(item)
+            } else {
+                roots.append(item)
             }
         }
-        return found
+        func subtree(_ item: RawProcess) -> [RawProcess] {
+            [item] + (children[item.pid] ?? []).flatMap(subtree)
+        }
+
+        var results: [RunningProcessInfo] = []
+
+        // 1) Antigravity Desktop: merge main app + all helpers/subprocesses into one row.
+        let desktopRoots = roots.filter {
+            if case .desktop = $0.kind { return true }
+            return false
+        }
+        if !desktopRoots.isEmpty {
+            let mainRoot = desktopRoots.first(where: { $0.kind == .desktop(main: true) })
+                ?? desktopRoots.min(by: { $0.pid < $1.pid })!
+            let allDesktopMembers = desktopRoots.flatMap(subtree)
+            let totalBytes = allDesktopMembers.reduce(Int64(0)) { $0 + $1.bytes }
+            results.append(RunningProcessInfo(
+                id: mainRoot.pid,
+                memberPIDs: Array(Set(allDesktopMembers.map(\.pid))).sorted(),
+                name: "Antigravity",
+                detail: nil,
+                kind: "App",
+                tty: nil,
+                isDetached: false,
+                memoryBytes: totalBytes
+            ))
+        }
+
+        // 2) Real agy CLI sessions: one row per root session with working directory, detached flag & summed memory.
+        for root in roots.filter({ $0.kind == .cli }).sorted(by: { $0.pid < $1.pid }) {
+            let members = subtree(root)
+            let totalBytes = members.reduce(Int64(0)) { $0 + $1.bytes }
+            let isDetached = (root.tty == nil && root.ppid == 1)
+            results.append(RunningProcessInfo(
+                id: root.pid,
+                memberPIDs: Array(Set(members.map(\.pid))).sorted(),
+                name: "agy CLI",
+                detail: processWorkingDirectory(root.pid),
+                kind: "CLI",
+                tty: root.tty,
+                isDetached: isDetached,
+                memoryBytes: totalBytes
+            ))
+        }
+
+        return results
+    }
+
+    private nonisolated static func collectLiveSubtreePIDs(rootPID: Int32, seedMembers: [Int32]) -> [Int32] {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/ps")
+        proc.arguments = ["-axo", "pid=,ppid="]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        guard (try? proc.run()) != nil else { return seedMembers }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        guard let output = String(data: data, encoding: .utf8) else { return seedMembers }
+
+        var childrenByPPID: [Int32: [Int32]] = [:]
+        var allPIDs = Set<Int32>()
+        for line in output.split(whereSeparator: \.isNewline) {
+            let parts = line.trimmingCharacters(in: .whitespaces).split(whereSeparator: \.isWhitespace)
+            guard parts.count >= 2, let pid = Int32(parts[0]), let ppid = Int32(parts[1]) else { continue }
+            allPIDs.insert(pid)
+            if ppid != pid {
+                childrenByPPID[ppid, default: []].append(pid)
+            }
+        }
+
+        // BFS from rootPID + any still-alive seed members (covers Desktop helpers reparented to PID 1).
+        var visited = Set<Int32>()
+        var queue: [Int32] = []
+        for candidate in ([rootPID] + seedMembers) where allPIDs.contains(candidate) && !visited.contains(candidate) {
+            visited.insert(candidate)
+            queue.append(candidate)
+        }
+        var idx = 0
+        while idx < queue.count {
+            let cur = queue[idx]
+            idx += 1
+            for child in childrenByPPID[cur] ?? [] where !visited.contains(child) {
+                visited.insert(child)
+                queue.append(child)
+            }
+        }
+        return Array(visited)
+    }
+
+    private nonisolated static func processStartStamp(_ pid: Int32) -> (sec: UInt64, usec: UInt64)? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return (sec: info.pbi_start_tvsec, usec: info.pbi_start_tvusec)
+    }
+
+    private nonisolated static func isSameProcessAlive(pid: Int32, startSec: UInt64, startUsec: UInt64) -> Bool {
+        guard let current = processStartStamp(pid) else { return false }
+        return current.sec == startSec && current.usec == startUsec
+    }
+
+    private nonisolated static func classifyProcess(pid: Int32, ucomm: String) -> ProcessKind? {
+        let lower = ucomm.lowercased()
+        if lower.hasPrefix("antigravityusage") { return nil }
+        guard let path = processExecutablePath(pid) else {
+            return lower == "agy" ? .cli : nil
+        }
+        let pathLower = path.lowercased()
+        if pathLower.contains("antigravityusagemonitor") || pathLower.contains("antigravity usage monitor") {
+            return nil
+        }
+        // Only match actual Antigravity.app bundle processes (excludes macOS XPC services like AutoFill / OpenPanel / QuickLook).
+        if pathLower.contains("/antigravity.app/") {
+            let isMain = pathLower.hasSuffix("/antigravity.app/contents/macos/antigravity")
+            return .desktop(main: isMain)
+        }
+        let base = URL(fileURLWithPath: path).lastPathComponent.lowercased()
+        if base == "agy" {
+            // Exclude our own ephemeral background quota probes.
+            let args = processArguments(pid)
+            if args.contains(where: { $0.contains("agy-silent-sync-") }) {
+                return nil
+            }
+            return .cli
+        }
+        return nil
+    }
+
+    private nonisolated static func processExecutablePath(_ pid: Int32) -> String? {
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        return String(decoding: buffer.prefix(Int(length)), as: UTF8.self)
+    }
+
+    private nonisolated static func processWorkingDirectory(_ pid: Int32) -> String? {
+        var info = proc_vnodepathinfo()
+        let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }
+        let path = withUnsafeBytes(of: &info.pvi_cdir.vip_path) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        guard !path.isEmpty else { return nil }
+        if path == FileManager.default.homeDirectoryForCurrentUser.path { return "~" }
+        return URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    private nonisolated static func processArguments(_ pid: Int32) -> [String] {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return [] }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return [] }
+        let argc = buffer.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }
+        var index = MemoryLayout<Int32>.size
+        while index < size, buffer[index] != 0 { index += 1 }
+        while index < size, buffer[index] == 0 { index += 1 }
+        var args: [String] = []
+        while args.count < argc, index < size {
+            let start = index
+            while index < size, buffer[index] != 0 { index += 1 }
+            args.append(String(decoding: buffer[start..<index], as: UTF8.self))
+            index += 1
+        }
+        return args
     }
 
     private func startTimer() {

@@ -80,9 +80,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarSpinAngle: CGFloat = 0
     private var disclosureTracks: [String: DisclosureTrack] = [:]
     private var disclosureDisplayLink: CADisplayLink?
+    private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        installTerminationSignalHandlers()
+        DispatchQueue.global(qos: .utility).async {
+            SilentCLISyncer.sweepOrphanedProbes()
+        }
         if preferences.enableUsageAlerts || preferences.enableBillingReminders {
             NotificationManager.shared.requestPermissionIfNeeded()
         }
@@ -416,6 +421,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        ActiveSyncProcessRegistry.shared.terminateAllImmediately()
+    }
+
+    private func installTerminationSignalHandlers() {
+        for sig in [SIGTERM, SIGINT] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler {
+                ActiveSyncProcessRegistry.shared.terminateAllImmediately()
+                NSApp.terminate(nil)
+            }
+            source.resume()
+            signalSources.append(source)
+        }
+    }
+
     private func updateStatusButton() {
         guard let button = statusItem.button else { return }
         button.title = ""
@@ -430,11 +452,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @main
 struct AntigravityUsageMonitorApp {
-    @MainActor
     static func main() {
-        let app = NSApplication.shared
-        let delegate = AppDelegate()
-        app.delegate = delegate
-        app.run()
+        let args = Array(CommandLine.arguments.dropFirst())
+        if let first = args.first {
+            if first == AgySyncWrapper.flag {
+                Darwin.exit(AgySyncWrapper.run(arguments: Array(args.dropFirst())))
+            }
+            if first == CLILoginSupervisor.flag {
+                Darwin.exit(CLILoginSupervisor.run(arguments: Array(args.dropFirst())))
+            }
+        }
+
+        MainActor.assumeIsolated {
+            let app = NSApplication.shared
+            let delegate = AppDelegate()
+            app.delegate = delegate
+            app.run()
+        }
     }
 }

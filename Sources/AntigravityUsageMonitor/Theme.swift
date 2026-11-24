@@ -463,36 +463,30 @@ struct SparklineView: View {
 
             ZStack {
                 if values.count >= 2 {
-                    Path { path in
-                        for (idx, val) in values.enumerated() {
-                            let x = w * CGFloat(idx) / CGFloat(values.count - 1)
-                            let norm = (val - minV) / (maxV - minV)
-                            let y = h - CGFloat(norm) * (h - 6) - 3
-                            if idx == 0 {
-                                path.move(to: CGPoint(x: x, y: y))
-                            } else {
-                                path.addLine(to: CGPoint(x: x, y: y))
-                            }
-                        }
+                    let points: [CGPoint] = values.enumerated().map { idx, val in
+                        let x = w * CGFloat(idx) / CGFloat(values.count - 1)
+                        let norm = (val - minV) / (maxV - minV)
+                        let y = h - CGFloat(norm) * (h - 6) - 3
+                        return CGPoint(x: x, y: y)
                     }
-                    .stroke(Color.white.opacity(hoveredIndex != nil ? 0.65 : 0.45), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+
+                    Self.monotoneCubicPath(points)
+                        .stroke(Color.white.opacity(hoveredIndex != nil ? 0.68 : 0.50), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
 
                     let activeIdx = hoveredIndex ?? (values.count - 1)
-                    if activeIdx >= 0 && activeIdx < values.count {
-                        let x = w * CGFloat(activeIdx) / CGFloat(values.count - 1)
-                        let norm = (values[activeIdx] - minV) / (maxV - minV)
-                        let y = h - CGFloat(norm) * (h - 6) - 3
+                    if activeIdx >= 0 && activeIdx < points.count {
+                        let pt = points[activeIdx]
                         if hoveredIndex != nil {
                             Path { p in
-                                p.move(to: CGPoint(x: x, y: 0))
-                                p.addLine(to: CGPoint(x: x, y: h))
+                                p.move(to: CGPoint(x: pt.x, y: 0))
+                                p.addLine(to: CGPoint(x: pt.x, y: h))
                             }
                             .stroke(Color.white.opacity(0.16), lineWidth: 1)
                         }
                         Circle()
                             .fill(Palette.accent)
                             .frame(width: hoveredIndex != nil ? 6 : 4.5, height: hoveredIndex != nil ? 6 : 4.5)
-                            .position(x: x, y: y)
+                            .position(x: pt.x, y: pt.y)
                     }
                 }
             }
@@ -517,6 +511,58 @@ struct SparklineView: View {
             }
         }
         .frame(width: 104, height: 30)
+    }
+
+    /// Monotone cubic Hermite spline (Steffen / D3 monotoneX) matching claude-usage-monitor:
+    /// smoothly interpolates through every point without ever overshooting local extrema.
+    private static func monotoneCubicPath(_ p: [CGPoint]) -> Path {
+        var path = Path()
+        guard let first = p.first else { return path }
+        path.move(to: first)
+        guard p.count > 2 else {
+            path.addLine(to: p.count == 2 ? p[1] : first)
+            return path
+        }
+
+        let n = p.count
+        var h = [CGFloat](repeating: 0, count: n - 1)
+        var slope = [CGFloat](repeating: 0, count: n - 1)
+        for i in 0..<(n - 1) {
+            h[i] = p[i + 1].x - p[i].x
+            slope[i] = h[i] > 0 ? (p[i + 1].y - p[i].y) / h[i] : 0
+        }
+
+        func sgn(_ x: CGFloat) -> CGFloat {
+            x > 0 ? 1 : (x < 0 ? -1 : 0)
+        }
+        func endTangent(_ s: CGFloat, neighbor: CGFloat) -> CGFloat {
+            let t = (3 * s - neighbor) / 2
+            if sgn(t) != sgn(s) { return 0 }
+            if abs(t) > 3 * abs(s) { return 3 * s }
+            return t
+        }
+
+        var tangent = [CGFloat](repeating: 0, count: n)
+        for i in 1..<(n - 1) {
+            let s0 = slope[i - 1]
+            let s1 = slope[i]
+            let denom = h[i - 1] + h[i]
+            let mean = denom > 0 ? (s0 * h[i] + s1 * h[i - 1]) / denom : 0
+            let limit = min(abs(s0), abs(s1), abs(mean) / 2)
+            tangent[i] = (sgn(s0) + sgn(s1)) * limit
+        }
+        tangent[0] = endTangent(slope[0], neighbor: tangent[1])
+        tangent[n - 1] = endTangent(slope[n - 2], neighbor: tangent[n - 2])
+
+        for i in 0..<(n - 1) {
+            let dx = h[i] / 3
+            path.addCurve(
+                to: p[i + 1],
+                control1: CGPoint(x: p[i].x + dx, y: p[i].y + dx * tangent[i]),
+                control2: CGPoint(x: p[i + 1].x - dx, y: p[i + 1].y - dx * tangent[i + 1])
+            )
+        }
+        return path
     }
 }
 

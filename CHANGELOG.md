@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-24
+
+### Added
+
+- **Grouped Active Processes with detached indicator & hover-to-terminate**: Merges `Antigravity.app` and its helpers into a single row with summed RSS memory, excludes macOS XPC services and background `agy-silent-sync-*` probes, labels orphaned CLI sessions (`PPID=1, TTY=??`) with an amber **Detached** badge, and adds a hover **Stop** button that terminates the full process subtree with `proc_bsdinfo` start-time PID-reuse protection.
+
+### Changed
+
+- **Smooth output speed sparkline**: Upgraded the 5-minute output speed sparkline from piecewise-linear segments to a Steffen monotone cubic Hermite spline (matching `claude-usage-monitor`).
+
+### Fixed
+
+- **Eliminated `agy` CLI orphan processes across Terminal sign-in & background sync**: Added two headless POSIX supervisors built into the main executable (`--cli-login-helper` and `--agy-sync-wrapper`). Terminal sign-in now watches `STDIN` with `poll(POLLERR|POLLHUP)` so closing the Terminal window immediately terminates `agy`, and auto-syncs, exits `agy`, and closes the opened Terminal window once sign-in completes. Background silent sync runs under a `kqueue` anonymous pipe-EOF watchdog (immune to parent `SIGKILL`), synchronous `applicationWillTerminate` / `SIGTERM` cleanup, startup orphan probe sweeping, and non-destructive `settings.json` merging.
+
 ## [0.1.7] - 2026-11-24
 
 ### Added

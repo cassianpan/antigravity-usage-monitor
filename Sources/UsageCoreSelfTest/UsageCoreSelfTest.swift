@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import UsageCore
 
@@ -26,10 +27,26 @@ private final class TestRunner {
     }
 }
 
-@MainActor
 @main
 struct UsageCoreSelfTest {
     static func main() {
+        let cliArgs = Array(CommandLine.arguments.dropFirst())
+        if let first = cliArgs.first {
+            if first == AgySyncWrapper.flag {
+                Darwin.exit(AgySyncWrapper.run(arguments: Array(cliArgs.dropFirst())))
+            }
+            if first == CLILoginSupervisor.flag {
+                Darwin.exit(CLILoginSupervisor.run(arguments: Array(cliArgs.dropFirst())))
+            }
+        }
+
+        MainActor.assumeIsolated {
+            runAllTests()
+        }
+    }
+
+    @MainActor
+    private static func runAllTests() {
         let runner = TestRunner()
         func check(_ condition: @autoclosure () -> Bool, _ message: String, file: StaticString = #file, line: UInt = #line) {
             runner.check(condition(), message, file: file, line: line)
@@ -324,6 +341,198 @@ struct UsageCoreSelfTest {
             check(parsed == expected, "SHA256SUMS parser must match exact zip filename")
             check(UpdateChecker.verifySHA256(data: payload, expectedHex: expected) == true, "SHA-256 verify must succeed")
             check(UpdateChecker.verifySHA256(data: Data("tampered".utf8), expectedHex: expected) == false, "SHA-256 verify must reject tampered data")
+        }
+
+        runner.runCase("ProcessControl: writeMergedSettings preserves user fields") {
+            let fm = FileManager.default
+            let dir = fm.temporaryDirectory.appendingPathComponent("aum-test-merge-\(UUID().uuidString)", isDirectory: true)
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: dir) }
+
+            let userSettings = dir.appendingPathComponent("user-settings.json")
+            try #"{"modelProvider":"custom","trustedWorkspaces":["/tmp"],"statusLine":{"command":"old"}}"#.write(
+                to: userSettings, atomically: true, encoding: .utf8
+            )
+            let probeScript = dir.appendingPathComponent("probe.sh")
+            let mergedURL = try CLIProbeSupport.writeMergedSettings(
+                probeScriptURL: probeScript,
+                into: dir,
+                userSettingsURL: userSettings
+            )
+            let data = try Data(contentsOf: mergedURL)
+            let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            check(obj?["modelProvider"] as? String == "custom", "Merged settings must preserve user modelProvider")
+            let sl = obj?["statusLine"] as? [String: Any]
+            check(sl?["command"] as? String == probeScript.path, "Merged settings must override statusLine.command")
+        }
+
+        runner.runCase("ProcessControl: AgySyncWrapper kills SIGHUP/SIGTERM-ignoring child on pipe EOF") {
+            let fm = FileManager.default
+            let dir = fm.temporaryDirectory.appendingPathComponent("aum-test-wrapper-\(UUID().uuidString)", isDirectory: true)
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: dir) }
+
+            let pidFile = dir.appendingPathComponent("child.pid")
+            let mockAgy = dir.appendingPathComponent("mock-agy.sh")
+            let script = """
+            #!/bin/sh
+            trap '' HUP TERM
+            echo $$ > '\(pidFile.path)'
+            sleep 60
+            """
+            try script.write(to: mockAgy, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: mockAgy.path)
+
+            let settingsFile = dir.appendingPathComponent("settings.json")
+            try "{}".write(to: settingsFile, atomically: true, encoding: .utf8)
+
+            var masterFD: Int32 = -1
+            var slaveFD: Int32 = -1
+            check(openpty(&masterFD, &slaveFD, nil, nil, nil) == 0, "openpty must succeed")
+            var wdPipe: [Int32] = [-1, -1]
+            var pidPipe: [Int32] = [-1, -1]
+            check(pipe(&wdPipe) == 0 && pipe(&pidPipe) == 0, "pipes must succeed")
+
+            let selfExec = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path
+            let wrapperPID = try PosixSpawn.spawn(
+                PosixSpawn.Options(
+                    executable: selfExec,
+                    arguments: [
+                        AgySyncWrapper.flag,
+                        "--agy", mockAgy.path,
+                        "--settings", settingsFile.path,
+                        "--cwd", dir.path,
+                        "--timeout", "10",
+                        "--watchdog-fd", "3",
+                        "--pid-fd", "4",
+                    ],
+                    dup2Map: [
+                        (slaveFD, STDIN_FILENO),
+                        (slaveFD, STDOUT_FILENO),
+                        (slaveFD, STDERR_FILENO),
+                        (wdPipe[0], 3),
+                        (pidPipe[1], 4),
+                    ],
+                    setProcessGroup: true,
+                    closeOnExecDefault: true
+                )
+            )
+            _ = close(slaveFD); _ = close(wdPipe[0]); _ = close(pidPipe[1])
+
+            var buf = [UInt8](repeating: 0, count: 64)
+            let n = read(pidPipe[0], &buf, buf.count)
+            _ = close(pidPipe[0])
+            let childPID = pid_t(String(decoding: buf[0..<max(0, n)], as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) ?? -1
+            check(childPID > 0, "Wrapper must report child PID")
+
+            // Wait briefly for mock script to enter trap + sleep.
+            let waitStart = Date()
+            while !fm.fileExists(atPath: pidFile.path) && Date().timeIntervalSince(waitStart) < 2.0 {
+                usleep(20_000)
+            }
+            check(kill(childPID, 0) == 0, "Mock agy child must be alive before parent EOF")
+
+            // Simulate parent SIGKILL by closing watchdog write FD without writing "G".
+            _ = close(wdPipe[1])
+
+            var st: Int32 = 0
+            let killDeadline = Date().addingTimeInterval(1.5)
+            var wrapperExited = false
+            while Date() < killDeadline {
+                if waitpid(wrapperPID, &st, WNOHANG) == wrapperPID {
+                    wrapperExited = true
+                    break
+                }
+                usleep(20_000)
+            }
+            _ = close(masterFD)
+
+            let childDead = (kill(childPID, 0) != 0 && errno == ESRCH)
+            check(wrapperExited, "Wrapper must exit promptly after parent pipe EOF")
+            check(childDead, "SIGHUP/SIGTERM-ignoring child must be killed within 1.5s of pipe EOF")
+        }
+
+        runner.runCase("ProcessControl: CLILoginSupervisor kills SIGHUP-ignoring child on Terminal close (POLLHUP)") {
+            let fm = FileManager.default
+            let dir = fm.temporaryDirectory.appendingPathComponent("aum-test-login-\(UUID().uuidString)", isDirectory: true)
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: dir) }
+
+            let pidFile = dir.appendingPathComponent("login-child.pid")
+            let mockAgy = dir.appendingPathComponent("mock-login-agy.sh")
+            let script = """
+            #!/bin/sh
+            trap '' HUP TERM
+            echo $$ > '\(pidFile.path)'
+            sleep 60
+            """
+            try script.write(to: mockAgy, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: mockAgy.path)
+
+            var masterFD: Int32 = -1
+            var slaveFD: Int32 = -1
+            check(openpty(&masterFD, &slaveFD, nil, nil, nil) == 0, "openpty must succeed")
+
+            let selfExec = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path
+            let snapOut = dir.appendingPathComponent("snap.json")
+            let helperPID = try PosixSpawn.spawn(
+                PosixSpawn.Options(
+                    executable: selfExec,
+                    arguments: [
+                        CLILoginSupervisor.flag,
+                        "--snapshot", snapOut.path,
+                        "--lang", "zh",
+                        "--agy", mockAgy.path,
+                    ],
+                    dup2Map: [
+                        (slaveFD, STDIN_FILENO),
+                        (slaveFD, STDOUT_FILENO),
+                        (slaveFD, STDERR_FILENO),
+                    ],
+                    setProcessGroup: true,
+                    closeOnExecDefault: true
+                )
+            )
+            _ = close(slaveFD)
+
+            // Wait for mock agy child to start and write its PID.
+            let waitStart = Date()
+            var mockPID: pid_t = -1
+            while Date().timeIntervalSince(waitStart) < 2.5 {
+                if let raw = try? String(contentsOf: pidFile, encoding: .utf8),
+                   let parsed = pid_t(raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+                   parsed > 0 {
+                    mockPID = parsed
+                    break
+                }
+                usleep(30_000)
+            }
+            check(mockPID > 0 && kill(mockPID, 0) == 0, "Mock login agy must be running before Terminal close")
+
+            // Simulate user clicking red X on Terminal window by closing masterFD.
+            _ = close(masterFD)
+
+            var st: Int32 = 0
+            let deadline = Date().addingTimeInterval(1.5)
+            var helperExited = false
+            while Date() < deadline {
+                if waitpid(helperPID, &st, WNOHANG) == helperPID {
+                    helperExited = true
+                    break
+                }
+                usleep(25_000)
+            }
+            if !helperExited {
+                _ = kill(helperPID, SIGKILL)
+                _ = waitpid(helperPID, &st, 0)
+            }
+            if mockPID > 0 && kill(mockPID, 0) == 0 {
+                _ = kill(mockPID, SIGKILL)
+                check(false, "Mock login agy survived Terminal close")
+            } else {
+                check(true, "Mock login agy killed immediately on Terminal close")
+            }
+            check(helperExited, "CLILoginSupervisor must exit promptly on Terminal close")
         }
 
         print("Summary: \(runner.passed) assertions passed, \(runner.failed) failed.")

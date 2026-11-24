@@ -141,22 +141,92 @@ struct PanelView: View {
                         .font(.system(size: 10.5))
                         .foregroundStyle(Palette.tertiary)
                 } else {
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 2) {
                         ForEach(store.runningProcesses) { proc in
+                            let isHovered = interaction.hoveredProcessId == proc.id
+                            let isTerminating = store.terminatingProcessIds.contains(proc.id)
                             HStack(spacing: 6) {
                                 Circle()
-                                    .fill(Palette.live)
+                                    .fill(proc.isDetached ? Palette.warning : Palette.live)
                                     .frame(width: 5, height: 5)
                                 Text(proc.name)
                                     .font(.system(size: 11))
                                     .foregroundStyle(Palette.text)
-                                Spacer()
-                                Text("PID \(proc.id)")
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(Palette.tertiary)
+                                if proc.isDetached {
+                                    Text(l10n.zh ? "无终端" : "Detached")
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundStyle(Palette.warning)
+                                        .padding(.horizontal, 4.5)
+                                        .padding(.vertical, 1)
+                                        .background(
+                                            Capsule().fill(Palette.warning.opacity(0.14))
+                                        )
+                                }
+                                if let detail = proc.detail, !detail.isEmpty {
+                                    Text(detail)
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(Palette.tertiary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                Spacer(minLength: 6)
+                                if isTerminating {
+                                    Text(l10n.zh ? "结束中…" : "Stopping…")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Palette.tertiary)
+                                } else if isHovered {
+                                    Button {
+                                        store.terminateProcess(proc)
+                                    } label: {
+                                        HStack(spacing: 3) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.system(size: 11))
+                                            Text(l10n.zh ? "结束" : "Stop")
+                                                .font(.system(size: 10, weight: .medium))
+                                        }
+                                        .foregroundStyle(Palette.critical)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1.5)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                                .fill(Palette.critical.opacity(0.14))
+                                        )
+                                    }
+                                    .buttonStyle(PressableStyle(scale: 0.94))
+                                    .panelTip("proc.kill.\(proc.id)", center: tipCenter, alignment: .trailing) {
+                                        let count = proc.memberPIDs.count
+                                        let note = l10n.zh
+                                            ? (count > 1 ? "结束 \(proc.name) 及全部 \(count) 个关联进程" : "结束 \(proc.name)（PID \(proc.id)）")
+                                            : (count > 1 ? "Terminate \(proc.name) and all \(count) related processes" : "Terminate \(proc.name) (PID \(proc.id))")
+                                        return Tip(note)
+                                    }
+                                } else {
+                                    Text(proc.memoryBytes > 0
+                                         ? ByteCountFormatter.string(fromByteCount: proc.memoryBytes, countStyle: .memory)
+                                         : "PID \(proc.id)")
+                                        .font(.system(size: 10.5, design: .monospaced))
+                                        .foregroundStyle(Palette.tertiary)
+                                }
+                            }
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 3)
+                            .background(
+                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .fill(isHovered ? Palette.hover : Color.clear)
+                            )
+                            .contentShape(Rectangle())
+                            .onHover { inside in
+                                withAnimation(.easeOut(duration: 0.12)) {
+                                    if inside {
+                                        interaction.hoveredProcessId = proc.id
+                                    } else if interaction.hoveredProcessId == proc.id {
+                                        interaction.hoveredProcessId = nil
+                                    }
+                                }
                             }
                         }
                     }
+                    .padding(.horizontal, -5)
                     .padding(.top, 2)
                 }
             }

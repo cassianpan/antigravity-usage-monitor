@@ -295,6 +295,7 @@ final class PanelInteractionState {
     var hoveredBucketId: String? = nil
     var hoveredBarIndex: Int? = nil
     var hoveredTab: SpendWindowTab? = nil
+    var hoveredProcessId: Int32? = nil
     var isLoginButtonHovered: Bool = false
     var showSpeedDotChart: Bool = false
     var hoveredSparkSampleIndex: Int? = nil
@@ -319,6 +320,7 @@ final class PanelInteractionState {
         hoveredBucketId = nil
         hoveredBarIndex = nil
         hoveredTab = nil
+        hoveredProcessId = nil
         isLoginButtonHovered = false
         hoveredSparkSampleIndex = nil
         hoveredDotSampleId = nil
