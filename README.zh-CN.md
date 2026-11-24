@@ -153,8 +153,8 @@ codesign --force --deep --sign "<你的证书名称>" "/Applications/Antigravity
 
 ## 致谢
 
-- [**claude-usage-monitor**](https://github.com/kittors/claude-usage-monitor)（[@kittors](https://github.com/kittors)）：本项目深受其启发，无论是菜单栏信息密度、配额安全线设计、深色毛玻璃面板质感，还是对 macOS 原生体验的打磨，都参考并致敬了原项目的优秀理念。非常感谢原作者的开源分享！
-- [**cc-usage-monitor**](https://github.com/imhu/cc-usage-monitor)（[@imhu](https://github.com/imhu)）：由另一位开发者独立构建并维护的 Windows 版本（支持 Antigravity 与 Claude 用量监控），感谢为 Windows 生态带来的精彩实现！
+- [**claude-usage-monitor**](https://github.com/kittors/claude-usage-monitor)（[@kittors](https://github.com/kittors)）：本项目深受其启发，无论是菜单栏信息密度、配额安全线设计、深色毛玻璃面板质感，还是对 macOS 原生体验的打磨，都参考并致敬了原项目的优秀理念。
+- [**cc-usage-monitor**](https://github.com/imhu/cc-usage-monitor)（[@imhu](https://github.com/imhu)）：由另一位开发者独立构建并维护的 Windows 版本，支持 Antigravity 与 Claude 用量监控。
 
 ## 开源协议
 

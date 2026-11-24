@@ -153,8 +153,8 @@ The repository is intentionally split into two clean layers:
 
 ## Credits & Acknowledgements
 
-- [**claude-usage-monitor**](https://github.com/kittors/claude-usage-monitor) by [@kittors](https://github.com/kittors) — This project is deeply inspired by its menu bar density, safe-pace line concept, frosted glass panel aesthetics, and attention to native macOS craft. Thank you for open-sourcing such a thoughtful tool!
-- [**cc-usage-monitor**](https://github.com/imhu/cc-usage-monitor) by [@imhu](https://github.com/imhu) — Built and maintained independently for Windows users (supporting both Antigravity and Claude usage monitoring). Thank you for bringing the experience to Windows!
+- [**claude-usage-monitor**](https://github.com/kittors/claude-usage-monitor) by [@kittors](https://github.com/kittors) — This project is deeply inspired by its menu bar density, safe-pace line concept, frosted glass panel aesthetics, and attention to native macOS craft.
+- [**cc-usage-monitor**](https://github.com/imhu/cc-usage-monitor) by [@imhu](https://github.com/imhu) — Built and maintained independently for Windows users, supporting both Antigravity and Claude usage monitoring.
 
 ## License
 
