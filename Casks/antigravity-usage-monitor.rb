@@ -1,6 +1,6 @@
 cask "antigravity-usage-monitor" do
-  version "0.1.5"
-  sha256 "092753507bbf755f0f28595c5961a7b2a1e6d47375ad46e86a6bcb627c594274"
+  version "0.1.6"
+  sha256 "51642a83b2c449666a11cfb80e361387fe641425b02e22d120e5a1eb89578cbd"
 
   url "https://github.com/cassianpan/antigravity-usage-monitor/releases/download/v#{version}/AntigravityUsageMonitor-#{version}-macOS-arm64.zip"
   name "Antigravity Usage Monitor"
