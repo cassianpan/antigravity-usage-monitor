@@ -202,15 +202,18 @@ public enum CLIProbeSupport {
         let escapedOut = "'" + outputURL.path.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
         let scriptContent = """
         #!/bin/sh
-        set -eu
+        umask 077
         OUT=\(escapedOut)
-        TMP="${OUT}.tmp.$$"
-        cat > "$TMP"
-        mv -f "$TMP" "$OUT"
+        TMP=$(/usr/bin/mktemp "${OUT}.tmp.XXXXXX" 2>/dev/null) || TMP=""
+        if [ -n "$TMP" ] && cat > "$TMP" 2>/dev/null; then
+            mv -f "$TMP" "$OUT" 2>/dev/null || rm -f "$TMP" 2>/dev/null || true
+        elif [ -n "$TMP" ]; then
+            rm -f "$TMP" 2>/dev/null || true
+        fi
         exit 0
         """
         try scriptContent.write(to: scriptURL, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptURL.path)
         return scriptURL
     }
 
@@ -260,11 +263,21 @@ public enum CLIProbeSupport {
             capturedAt: Date()
         )
         let fm = FileManager.default
-        try fm.createDirectory(at: snapshotURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let parentDir = snapshotURL.deletingLastPathComponent()
+        try fm.createDirectory(
+            at: parentDir,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        var st = stat()
+        if lstat(snapshotURL.path, &st) == 0, (st.st_mode & S_IFMT) == S_IFLNK {
+            throw POSIXError(.ELOOP)
+        }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(merged)
         try data.write(to: snapshotURL, options: .atomic)
+        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: snapshotURL.path)
         return merged
     }
 }

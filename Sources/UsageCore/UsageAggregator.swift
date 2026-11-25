@@ -91,9 +91,17 @@ public struct UsageAggregator: Sendable {
         let lastAge = max(0, now.timeIntervalSince(latest.timestamp))
         let isActive = lastAge <= 60
 
-        // Compute per-turn approximate tok/s within each conversation, clamping outliers.
-        var samples: [OutputSpeedSample] = []
-        var nextId = 0
+        // Compute per-turn approximate tok/s within each conversation, then quarantine per-model MAD outliers.
+        struct RawSpeedSample {
+            let timestamp: Date
+            let rate: Double
+            let dt: TimeInterval
+            let outputTokens: Int
+            let modelKey: String
+            let modelDisplayName: String
+        }
+
+        var rawSamples: [RawSpeedSample] = []
         let byConv = Dictionary(grouping: recent, by: \.conversationId)
         for (_, convRecords) in byConv {
             let sorted = convRecords.sorted { $0.timestamp < $1.timestamp }
@@ -106,20 +114,45 @@ public struct UsageAggregator: Sendable {
                     dt = max(3.0, Double(rec.outputTokens) / 45.0)
                 }
                 guard dt >= 2.0 && dt <= 90.0 else { continue }
-                let rawSpeed = Double(rec.outputTokens) / dt
-                let clamped = max(5.0, min(220.0, rawSpeed))
-                samples.append(OutputSpeedSample(
-                    id: nextId,
+                let rate = Double(rec.outputTokens) / dt
+                guard rate.isFinite && rate >= 1.0 && rate <= 400.0 else { continue }
+                rawSamples.append(RawSpeedSample(
                     timestamp: rec.timestamp,
-                    tokensPerSec: clamped,
+                    rate: rate,
+                    dt: dt,
                     outputTokens: rec.outputTokens,
+                    modelKey: PricingCatalog.normalizePricingKey(rec.model),
                     modelDisplayName: PricingCatalog.displayName(for: rec.model)
                 ))
-                nextId += 1
             }
         }
 
-        samples.sort { $0.timestamp < $1.timestamp }
+        // Per-model MAD outlier quarantine: drop spikes > max(8 * median, median + 12 * MAD) when >= 5 samples exist.
+        var modelUpperBound: [String: Double] = [:]
+        let groupedByModel = Dictionary(grouping: rawSamples, by: \.modelKey)
+        for (modelKey, items) in groupedByModel where items.count >= 5 {
+            let rates = items.map(\.rate).sorted()
+            let med = Self.median(rates)
+            let deviations = rates.map { abs($0 - med) }.sorted()
+            let mad = Self.median(deviations)
+            modelUpperBound[modelKey] = max(8.0 * med, med + 12.0 * mad)
+        }
+
+        var samples: [OutputSpeedSample] = []
+        var nextId = 0
+        for item in rawSamples.sorted(by: { $0.timestamp < $1.timestamp }) {
+            if let bound = modelUpperBound[item.modelKey], item.rate > bound {
+                continue
+            }
+            samples.append(OutputSpeedSample(
+                id: nextId,
+                timestamp: item.timestamp,
+                tokensPerSec: item.rate,
+                outputTokens: item.outputTokens,
+                modelDisplayName: item.modelDisplayName
+            ))
+            nextId += 1
+        }
 
         let samples5m = samples.filter { $0.timestamp >= fiveMinutesAgo }
         let avg5m: Double? = samples5m.isEmpty ? nil : (samples5m.map(\.tokensPerSec).reduce(0, +) / Double(samples5m.count))
@@ -210,13 +243,16 @@ public struct UsageAggregator: Sendable {
             cacheRead += record.cacheReadTokens
             output += record.outputTokens
 
-            if let price = pricing.price(for: record.model) {
+            if let price = pricing.price(for: record.model, at: record.timestamp) {
                 costUSD += price.costUSD(
                     uncachedInput: record.inputTokens,
                     cacheRead: record.cacheReadTokens,
                     output: record.outputTokens
                 )
-                savingsUSD += price.cacheSavingsUSD(cacheRead: record.cacheReadTokens)
+                savingsUSD += price.cacheSavingsUSD(
+                    cacheRead: record.cacheReadTokens,
+                    uncachedInput: record.inputTokens
+                )
             } else {
                 unpriced.insert(record.model)
             }
@@ -239,6 +275,9 @@ public struct UsageAggregator: Sendable {
             var cacheRead = 0
             var output = 0
             var count = 0
+            var costUSD = 0.0
+            var savingsUSD = 0.0
+            var anyPriced = false
         }
 
         var grouped: [String: Accumulator] = [:]
@@ -248,13 +287,22 @@ public struct UsageAggregator: Sendable {
             acc.cacheRead += record.cacheReadTokens
             acc.output += record.outputTokens
             acc.count += 1
+            if let price = pricing.price(for: record.model, at: record.timestamp) {
+                acc.anyPriced = true
+                acc.costUSD += price.costUSD(
+                    uncachedInput: record.inputTokens,
+                    cacheRead: record.cacheReadTokens,
+                    output: record.outputTokens
+                )
+                acc.savingsUSD += price.cacheSavingsUSD(
+                    cacheRead: record.cacheReadTokens,
+                    uncachedInput: record.inputTokens
+                )
+            }
             grouped[record.model] = acc
         }
 
         return grouped.map { model, acc in
-            let price = pricing.price(for: model)
-            let cost = price?.costUSD(uncachedInput: acc.uncached, cacheRead: acc.cacheRead, output: acc.output)
-            let savings = price?.cacheSavingsUSD(cacheRead: acc.cacheRead)
             return ModelUsageSummary(
                 model: model,
                 displayName: PricingCatalog.displayName(for: model),
@@ -262,8 +310,8 @@ public struct UsageAggregator: Sendable {
                 cacheReadTokens: acc.cacheRead,
                 outputTokens: acc.output,
                 requestCount: acc.count,
-                estimatedCostUSD: cost,
-                cacheSavingsUSD: savings
+                estimatedCostUSD: acc.anyPriced ? acc.costUSD : nil,
+                cacheSavingsUSD: acc.anyPriced ? acc.savingsUSD : nil
             )
         }
         .sorted { lhs, rhs in
@@ -277,6 +325,14 @@ public struct UsageAggregator: Sendable {
             }
             return lhs.model < rhs.model
         }
+    }
+
+    private static func median(_ sorted: [Double]) -> Double {
+        let mid = sorted.count / 2
+        if sorted.count % 2 == 1 {
+            return sorted[mid]
+        }
+        return (sorted[mid - 1] + sorted[mid]) * 0.5
     }
 
     private func buildDailyTrend(records: [TranscriptRecord], now: Date, days: Int) -> [DailyUsagePoint] {
@@ -310,7 +366,7 @@ public struct UsageAggregator: Sendable {
             bucket.uncached += record.inputTokens
             bucket.cacheRead += record.cacheReadTokens
             bucket.output += record.outputTokens
-            if let price = pricing.price(for: record.model) {
+            if let price = pricing.price(for: record.model, at: record.timestamp) {
                 bucket.cost += price.costUSD(
                     uncachedInput: record.inputTokens,
                     cacheRead: record.cacheReadTokens,

@@ -912,20 +912,17 @@ struct PanelView: View {
                 .background(Palette.controlSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                 // Projected spend & tokens:
-                // 1) Current week official ratio (>= 10% usage),
-                // 2) Borrowed full-week basis from a previous >= 10% week (matching claude-usage-monitor),
-                // 3) Fallback to daily run-rate when neither exists yet.
+                // 1) Hybrid Theil-Sen + Empirical Bayes calibrated weekly capacity estimate,
+                // 2) Legacy saved full-week basis fallback,
+                // 3) Daily run-rate fallback before enough quota samples exist.
                 let projection: (costUSD: Double, tokens: Int, isRunRate: Bool)? = {
                     guard preferences.selectedSpendTab != .today else { return nil }
                     let isMonth = preferences.selectedSpendTab == .month
                     let weeksInMonth = Double(store.localReport.monthPeriod?.totalDays ?? 30) / 7.0
 
-                    if let weekly = store.officialReport.primaryWeekly,
-                       !weekly.isResetElapsed,
-                       weekly.usedFraction >= 0.10,
-                       store.localReport.week.estimatedCostUSD > 0 {
-                        let fullWeekCost = store.localReport.week.estimatedCostUSD / weekly.usedFraction
-                        let fullWeekTokens = Double(store.localReport.week.totalTokens) / weekly.usedFraction
+                    if let est = store.weeklyCapacityEstimate, est.fullCostUSD > 0 {
+                        let fullWeekCost = est.fullCostUSD
+                        let fullWeekTokens = Double(est.fullTokens)
                         return isMonth
                             ? (fullWeekCost * weeksInMonth, Int(fullWeekTokens * weeksInMonth), false)
                             : (fullWeekCost, Int(fullWeekTokens), false)
@@ -1013,11 +1010,11 @@ struct PanelView: View {
                                             ],
                                             note: proj.isRunRate
                                                 ? (l10n.zh
-                                                    ? "本周额度尚不足 10%，暂按本周期日均消耗推算；达到 10% 后自动切换为官方配额满额推算。"
-                                                    : "Weekly usage is under 10%; extrapolated from current daily pace until 10% is reached.")
+                                                    ? "本周有效配额样本尚不足，暂按本周期日均消耗推算；累计到 ≥ 2% 用量与 5 次请求后自动切换为官方配额校准模型。"
+                                                    : "Not enough weekly quota samples yet; extrapolated from current daily pace until ≥ 2% usage and 5 requests.")
                                                 : (l10n.zh
-                                                    ? "按官方周限额已用比例推算用满 100% 时的大致总量，仅供体感参考。"
-                                                    : "Extrapolated from official weekly limit percentage assuming 100% usage.")
+                                                    ? "结合多点斜率与历史周期先验推算用满 100% 周额度时的大致总量，仅供体感参考。"
+                                                    : "Calibrated from active-cycle slope and prior-cycle history assuming 100% weekly quota usage.")
                                         )
                                     }
                             }

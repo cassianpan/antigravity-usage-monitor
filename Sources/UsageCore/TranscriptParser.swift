@@ -122,11 +122,19 @@ public final class TranscriptIndex: @unchecked Sendable {
 
     private let brainDirectory: URL
     private let parser: TranscriptParser
+    private let ledger: UsageLedger?
+    private let lock = NSLock()
     private var cursors: [String: FileCursor] = [:]
+    private var hasSeededLedger = false
 
-    public init(brainDirectory: URL, parser: TranscriptParser = TranscriptParser()) {
+    public init(
+        brainDirectory: URL,
+        parser: TranscriptParser = TranscriptParser(),
+        ledgerURL: URL? = nil
+    ) {
         self.brainDirectory = brainDirectory
         self.parser = parser
+        self.ledger = ledgerURL.map { UsageLedger(fileURL: $0) }
     }
 
     public static var defaultBrainDirectory: URL {
@@ -134,8 +142,15 @@ public final class TranscriptIndex: @unchecked Sendable {
             .appendingPathComponent(".gemini/antigravity/brain", isDirectory: true)
     }
 
+    /// Synchronously flushes any pending buffered ledger writes to disk.
+    public func flushLedger() {
+        ledger?.flush()
+    }
+
     /// Scans the brain directory incrementally and returns all parsed records + unique conversation count.
     public func refresh() -> (records: [TranscriptRecord], conversationCount: Int) {
+        lock.lock()
+        defer { lock.unlock() }
         let fm = FileManager.default
         guard let conversationDirs = try? fm.contentsOfDirectory(
             at: brainDirectory,
@@ -143,11 +158,15 @@ public final class TranscriptIndex: @unchecked Sendable {
             options: [.skipsHiddenFiles]
         ) else {
             cursors.removeAll()
+            if let ledger {
+                return ledger.mergeAndPersist(liveByConversation: [:])
+            }
             return ([], 0)
         }
 
         var activePaths = Set<String>()
         var allRecords: [TranscriptRecord] = []
+        var changedByConversation: [String: [TranscriptRecord]] = [:]
         var conversationIds = Set<String>()
 
         for dir in conversationDirs {
@@ -156,7 +175,11 @@ public final class TranscriptIndex: @unchecked Sendable {
                 .appendingPathComponent("logs", isDirectory: true)
                 .appendingPathComponent("transcript.jsonl", isDirectory: false)
 
-            guard fm.fileExists(atPath: transcriptURL.path) else { continue }
+            // Strictly read regular non-symlink files (prevents symlink loops and blocking on FIFO named pipes).
+            guard let rv = try? transcriptURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  rv.isRegularFile == true,
+                  rv.isSymbolicLink != true else { continue }
+
             let path = transcriptURL.path
             activePaths.insert(path)
 
@@ -165,6 +188,7 @@ public final class TranscriptIndex: @unchecked Sendable {
             let fileSize = (attrs?[.size] as? NSNumber)?.uint64Value ?? 0
             let modDate = (attrs?[.modificationDate] as? Date) ?? .distantPast
 
+            var fileChanged = !hasSeededLedger
             if var cursor = cursors[path] {
                 if fileSize < cursor.byteOffset {
                     // File truncated/rewritten: re-parse from scratch.
@@ -172,17 +196,41 @@ public final class TranscriptIndex: @unchecked Sendable {
                     let fresh = readSlice(url: transcriptURL, offset: 0, conversationId: conversationId, lastKnownModel: &lastModel)
                     cursor = FileCursor(byteOffset: fresh.newOffset, modificationDate: modDate, records: fresh.records, lastKnownModel: lastModel)
                     cursors[path] = cursor
+                    fileChanged = true
                 } else if fileSize > cursor.byteOffset || modDate > cursor.modificationDate {
+                    let hadNoModelBefore = (cursor.lastKnownModel == nil)
                     var lastModel = cursor.lastKnownModel
                     let delta = readSlice(url: transcriptURL, offset: cursor.byteOffset, conversationId: conversationId, lastKnownModel: &lastModel)
                     cursor.byteOffset = delta.newOffset
                     cursor.modificationDate = modDate
                     cursor.lastKnownModel = lastModel
+                    // Backfill any earlier leading "unknown" records once a real model appears in later steps.
+                    if hadNoModelBefore, let resolvedModel = lastModel {
+                        cursor.records = cursor.records.map { rec in
+                            if rec.model.lowercased() == "unknown" {
+                                return TranscriptRecord(
+                                    timestamp: rec.timestamp,
+                                    model: resolvedModel,
+                                    inputTokens: rec.inputTokens,
+                                    cacheReadTokens: rec.cacheReadTokens,
+                                    outputTokens: rec.outputTokens,
+                                    conversationId: rec.conversationId
+                                )
+                            }
+                            return rec
+                        }
+                    }
                     cursor.records.append(contentsOf: delta.records)
                     cursors[path] = cursor
+                    if !delta.records.isEmpty || (hadNoModelBefore && lastModel != nil) {
+                        fileChanged = true
+                    }
                 }
                 if !cursor.records.isEmpty {
                     conversationIds.insert(conversationId)
+                    if fileChanged {
+                        changedByConversation[conversationId] = cursor.records
+                    }
                     allRecords.append(contentsOf: cursor.records)
                 }
             } else {
@@ -192,16 +240,25 @@ public final class TranscriptIndex: @unchecked Sendable {
                 cursors[path] = cursor
                 if !cursor.records.isEmpty {
                     conversationIds.insert(conversationId)
+                    changedByConversation[conversationId] = cursor.records
                     allRecords.append(contentsOf: cursor.records)
                 }
             }
         }
 
-        // Prune removed files
+        // Prune removed files from live cursor cache (persisted ledger retains their numeric history).
         for key in cursors.keys where !activePaths.contains(key) {
             cursors.removeValue(forKey: key)
         }
 
+        if let ledger {
+            let forceInitialFlush = !hasSeededLedger
+            hasSeededLedger = true
+            return ledger.mergeAndPersist(
+                liveByConversation: changedByConversation,
+                forceFlush: forceInitialFlush
+            )
+        }
         return (allRecords, conversationIds.count)
     }
 

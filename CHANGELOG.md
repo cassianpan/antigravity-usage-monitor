@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-11-25
+
+### Added
+
+- **Deletion-proof local numeric usage ledger**: Persists per-conversation token & timestamp records (strictly numeric metadata—never prompts or content) to `~/Library/Application Support/AntigravityUsageMonitor/usage-monitor-ledger-v1.json` (`0600` permissions) so clearing or deleting Antigravity chat sessions no longer wipes monthly, weekly, or all-time API-equivalent totals. Includes atomic persistence with quit/`SIGTERM` flush, future-schema read-only guard, corrupt-file `.bak` preservation, and symlink exclusion.
+- **Hybrid Theil-Sen + Empirical Bayes weekly quota calibration**: Replaces single-point `cost / used%` division with a cross-cycle calibration engine (`usage-monitor-quota-calibration-v1.json`) that combines monotonic active-cycle sampling, cross-device-resistant Theil-Sen median slope (`Δcost / Δu`), Empirical Bayes shrinkage across weekly resets, and multi-point regime-shift detection aligned to the official snapshot timestamp and Gemini quota family.
+- **2026/2027 date-effective & long-context pricing catalog**: Adds exact pricing for Gemini 4 (`Carbon`, `Argon`, `Neon`, `Hydrogen`, `Orchestrator (Neon)`), Gemini 3.6–3.8 Flash (with `2026-12-01` and `2027-01-01` scheduled rate step-ups), Claude Opus 4.5/4.6 (`$5/$25`), Claude Opus 5.5 (`$4/$20`), Claude Haiku 5.5, GPT 5.4, explicit child-model matching (`gpt-4.1-mini/nano`, `gpt-5-mini/nano`, `o3-mini`), and automatic long-context tiered billing (`>100K` / `>200K` / `>272K`).
+
+### Changed
+
+- **Per-model MAD outlier quarantine for output speed**: Filters bursty timestamp glitches and instant tool-call responses using per-model Median Absolute Deviation (`> median + 4×MAD` or `> 8×median`) so the 5-minute output speed figure and sparkline stay smooth and realistic.
+- **Hardened `statusLine` bridge & probe scripts**: Bridge and probe shell scripts now use `umask 077`, atomic `mktemp` staging (`0600`), pre-rename chained command execution (preventing cross-session races), and always exit `0` so host CLI terminals are never disrupted even on disk errors or non-zero chained commands.
+
+### Fixed
+
+- **Incremental model backfill & snapshot watcher precision**: Backfills leading `unknown` model entries across incremental transcript refreshes once the real model appears, filters directory watcher events by exact `lstat` snapshot signature (avoiding redundant refreshes on unrelated config files), and guarantees directory creation on first launch.
+
 ## [0.1.9] - 2026-11-24
 
 ### Added

@@ -432,6 +432,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        store.flushPendingState()
         ActiveSyncProcessRegistry.shared.terminateAllImmediately()
     }
 
@@ -439,7 +440,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for sig in [SIGTERM, SIGINT] {
             signal(sig, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
-            source.setEventHandler {
+            source.setEventHandler { [weak self] in
+                self?.store.flushPendingState()
                 ActiveSyncProcessRegistry.shared.terminateAllImmediately()
                 NSApp.terminate(nil)
             }

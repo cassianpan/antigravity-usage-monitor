@@ -66,6 +66,7 @@ private struct RefreshPayload: Sendable {
     let cliBinaryPath: String?
     let officialReport: OfficialQuotaReport
     let localReport: LocalUsageReport
+    let weeklyCapacityEstimate: QuotaCapacityEstimate?
     let runningProcesses: [RunningProcessInfo]
 }
 
@@ -75,6 +76,7 @@ final class UsageMonitorStore {
     private let transcriptIndex: TranscriptIndex
     private let aggregator: UsageAggregator
     private let quotaEvaluator: QuotaEvaluator
+    private let quotaEstimator: QuotaEstimator
     private let silentSyncer: SilentCLISyncer
     private let updateChecker: UpdateChecker
     let bridgeInstaller: StatusLineBridgeInstaller
@@ -82,6 +84,7 @@ final class UsageMonitorStore {
 
     var localReport: LocalUsageReport = LocalUsageReport()
     var officialReport: OfficialQuotaReport = OfficialQuotaReport()
+    var weeklyCapacityEstimate: QuotaCapacityEstimate? = nil
     var bridgeStatus: BridgeStatus = .notInstalled(existingCommand: nil)
     var runningProcesses: [RunningProcessInfo] = []
     var terminatingProcessIds: Set<Int32> = []
@@ -147,6 +150,7 @@ final class UsageMonitorStore {
     private var loginTerminalWatchTask: Task<Void, Never>?
     private var directoryWatcher: DispatchSourceFileSystemObject?
     private var watchedFD: Int32 = -1
+    private var lastObservedSnapshotSignature: String? = nil
     private var watcherDebounceTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var lastAutoSyncAttempt: Date = .distantPast
@@ -160,9 +164,15 @@ final class UsageMonitorStore {
         cliConfigDirectory: URL = StatusLineBridgeInstaller.defaultCLIConfigDirectory
     ) {
         self.preferences = preferences
-        self.transcriptIndex = TranscriptIndex(brainDirectory: brainDirectory)
+        // Store durable ledger & quota calibration under ~/Library/Application Support/AntigravityUsageMonitor/
+        // so writes never wake the cliConfigDirectory snapshot watcher.
+        self.transcriptIndex = TranscriptIndex(
+            brainDirectory: brainDirectory,
+            ledgerURL: UsageLedger.defaultLedgerURL
+        )
         self.aggregator = UsageAggregator()
         self.quotaEvaluator = QuotaEvaluator()
+        self.quotaEstimator = QuotaEstimator(fileURL: QuotaEstimator.defaultCalibrationURL)
         self.bridgeInstaller = StatusLineBridgeInstaller(cliConfigDirectory: cliConfigDirectory)
         self.silentSyncer = SilentCLISyncer(snapshotURL: bridgeInstaller.snapshotURL, evaluator: quotaEvaluator)
         self.updateChecker = UpdateChecker()
@@ -392,8 +402,11 @@ final class UsageMonitorStore {
         let index = transcriptIndex
         let agg = aggregator
         let evaluator = quotaEvaluator
+        let estimator = quotaEstimator
         let installer = bridgeInstaller
         let billingDay = preferences.billingDay > 0 ? preferences.billingDay : nil
+        let savedPriorCost = preferences.savedFullWeekCostUSD > 0 ? preferences.savedFullWeekCostUSD : nil
+        let savedPriorTokens = preferences.savedFullWeekTokens > 0 ? preferences.savedFullWeekTokens : nil
         let selfPid = Int32(ProcessInfo.processInfo.processIdentifier)
 
         refreshTask = Task { [weak self] in
@@ -411,12 +424,48 @@ final class UsageMonitorStore {
                     officialWeeklyResetTime: official.primaryWeekly?.resetTime,
                     billingDay: billingDay
                 )
+                let weeklyEstimate: QuotaCapacityEstimate? = {
+                    guard let weekly = official.primaryWeekly, !weekly.isResetElapsed else {
+                        return nil
+                    }
+                    // Align local spend strictly to the official snapshot timestamp and quota model family
+                    // so stale snapshots or 3P Claude/GPT usage never distort Gemini weekly capacity calibration.
+                    let cutoff = official.snapshotCapturedAt ?? now
+                    let weekStart = local.weekPeriod?.start ?? now.addingTimeInterval(-7 * 24 * 3600)
+                    let isGeminiBucket = weekly.bucketId.lowercased().hasPrefix("gemini")
+                    let alignedRecords = scan.records.filter { rec in
+                        guard rec.timestamp >= weekStart && rec.timestamp <= cutoff else { return false }
+                        if isGeminiBucket {
+                            return PricingCatalog.isGeminiQuotaFamily(rec.model)
+                        }
+                        return true
+                    }
+                    let alignedSummary = agg.aggregate(
+                        records: alignedRecords,
+                        conversationCount: scan.conversationCount,
+                        now: cutoff,
+                        officialWeeklyResetTime: weekly.resetTime,
+                        billingDay: billingDay
+                    ).week
+                    return estimator.observeAndEstimateWeekly(
+                        accountKey: official.email ?? "default",
+                        resetTime: weekly.resetTime,
+                        usedFraction: weekly.usedFraction,
+                        spentCostUSD: alignedSummary.estimatedCostUSD,
+                        spentTokens: alignedSummary.totalTokens,
+                        requestCount: alignedSummary.requestCount,
+                        recordObservation: !official.isStale && official.snapshotCapturedAt != nil,
+                        fallbackPriorCostUSD: savedPriorCost,
+                        fallbackPriorTokens: savedPriorTokens
+                    )
+                }()
                 let procs = Self.detectRunningProcesses(excluding: selfPid)
                 return RefreshPayload(
                     bridgeStatus: status,
                     cliBinaryPath: cliPath,
                     officialReport: official,
                     localReport: local,
+                    weeklyCapacityEstimate: weeklyEstimate,
                     runningProcesses: procs
                 )
             }.value
@@ -430,10 +479,12 @@ final class UsageMonitorStore {
                 withAnimation(.smooth(duration: 0.5)) {
                     self.officialReport = payload.officialReport
                     self.localReport = payload.localReport
+                    self.weeklyCapacityEstimate = payload.weeklyCapacityEstimate
                 }
             } else {
                 self.officialReport = payload.officialReport
                 self.localReport = payload.localReport
+                self.weeklyCapacityEstimate = payload.weeklyCapacityEstimate
                 self.hasLoadedInitialReport = true
             }
             self.runningProcesses = payload.runningProcesses
@@ -448,12 +499,11 @@ final class UsageMonitorStore {
                 }
             }
 
-            if let weekly = payload.officialReport.primaryWeekly,
-               !weekly.isResetElapsed,
-               weekly.usedFraction >= 0.10,
-               payload.localReport.week.estimatedCostUSD > 0 {
-                self.preferences.savedFullWeekCostUSD = payload.localReport.week.estimatedCostUSD / weekly.usedFraction
-                self.preferences.savedFullWeekTokens = Int(Double(payload.localReport.week.totalTokens) / weekly.usedFraction)
+            if let est = payload.weeklyCapacityEstimate,
+               !est.usedPriorOnly,
+               est.fullCostUSD > 0 {
+                self.preferences.savedFullWeekCostUSD = est.fullCostUSD
+                self.preferences.savedFullWeekTokens = est.fullTokens
             }
 
             let currentTokens = payload.localReport.week.totalTokens
@@ -483,6 +533,11 @@ final class UsageMonitorStore {
     func restartTimer() {
         timer?.invalidate()
         startTimer()
+    }
+
+    /// Flushes any throttled local ledger mutations immediately (called on app quit / SIGTERM).
+    func flushPendingState() {
+        transcriptIndex.flushLedger()
     }
 
     func syncOfficialInBackground(force: Bool) async {
@@ -1055,8 +1110,18 @@ final class UsageMonitorStore {
             watchedFD = -1
         }
 
-        let dirPath = bridgeInstaller.cliConfigDirectory.path
+        let dirURL = bridgeInstaller.cliConfigDirectory
+        let dirPath = dirURL.path
+        if !FileManager.default.fileExists(atPath: dirPath) {
+            try? FileManager.default.createDirectory(
+                at: dirURL,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+        }
         guard FileManager.default.fileExists(atPath: dirPath) else { return }
+
+        lastObservedSnapshotSignature = Self.fileSignature(atPath: bridgeInstaller.snapshotURL.path)
 
         let fd = open(dirPath, O_EVTONLY)
         guard fd >= 0 else { return }
@@ -1070,6 +1135,9 @@ final class UsageMonitorStore {
         source.setEventHandler { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
+                let currentSignature = Self.fileSignature(atPath: self.bridgeInstaller.snapshotURL.path)
+                guard currentSignature != self.lastObservedSnapshotSignature else { return }
+                self.lastObservedSnapshotSignature = currentSignature
                 self.watcherDebounceTask?.cancel()
                 self.watcherDebounceTask = Task { [weak self] in
                     try? await Task.sleep(for: .milliseconds(300))
@@ -1080,5 +1148,11 @@ final class UsageMonitorStore {
         }
         source.resume()
         directoryWatcher = source
+    }
+
+    private nonisolated static func fileSignature(atPath path: String) -> String? {
+        var st = stat()
+        guard lstat(path, &st) == 0 else { return nil }
+        return "\(st.st_ino):\(st.st_size):\(st.st_mtimespec.tv_sec).\(st.st_mtimespec.tv_nsec)"
     }
 }

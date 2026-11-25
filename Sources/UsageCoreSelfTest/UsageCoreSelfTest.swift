@@ -554,6 +554,250 @@ struct UsageCoreSelfTest {
             check(splitMoney == ["$3.33", "$3.33", "$3.34"], "Apportioned money must sum exactly to displayed total")
         }
 
+        runner.runCase("PricingCatalog: 2026/2027 date-effective pricing, Opus 4.6/5.5, child models, aliases, and long-context step-up") {
+            let catalog = PricingCatalog.default
+            let iso = ISO8601DateFormatter()
+            let nov2026 = iso.date(from: "2026-11-25T00:00:00Z")!
+            let dec2026 = iso.date(from: "2026-12-01T00:00:00Z")!
+            let jan2027 = iso.date(from: "2027-01-01T00:00:00Z")!
+
+            let opus46 = catalog.price(for: "claude-opus-4-6", at: nov2026)
+            check(opus46?.inputPerMillion == 5.0 && opus46?.outputPerMillion == 25.0, "Claude Opus 4.6 must be $5/$25")
+            let opus41 = catalog.price(for: "claude-opus-4-1", at: nov2026)
+            check(opus41?.inputPerMillion == 15.0 && opus41?.outputPerMillion == 75.0, "Legacy Claude Opus 4.1 must remain $15/$75")
+            let opus4Dated = catalog.price(for: "claude-opus-4-20250514", at: nov2026)
+            check(opus4Dated?.inputPerMillion == 15.0 && opus4Dated?.outputPerMillion == 75.0, "Dated Claude Opus 4 must remain $15/$75")
+            let opus40 = catalog.price(for: "claude-opus-4-0", at: nov2026)
+            check(opus40?.inputPerMillion == 15.0 && opus40?.outputPerMillion == 75.0, "Claude Opus 4.0 must remain $15/$75")
+            let opus55 = catalog.price(for: "claude-opus-5-5", at: nov2026)
+            check(opus55?.inputPerMillion == 4.0 && opus55?.outputPerMillion == 20.0, "Claude Opus 5.5 must be $4/$20")
+
+            check(catalog.price(for: "gpt-4.1-mini", at: nov2026)?.inputPerMillion == 0.40, "gpt-4.1-mini must not match gpt-4.1 parent price")
+            check(catalog.price(for: "gpt-4.1-nano", at: nov2026)?.inputPerMillion == 0.10, "gpt-4.1-nano must be $0.10/1M")
+            check(catalog.price(for: "gpt-5-nano", at: nov2026)?.inputPerMillion == 0.05, "gpt-5-nano must be $0.05/1M")
+            check(catalog.price(for: "o3-mini", at: nov2026)?.inputPerMillion == 1.10, "o3-mini must be $1.10/1M")
+            check(catalog.price(for: "models/gemini-2.5-pro", at: nov2026)?.inputPerMillion == 1.25, "models/ prefix must strip cleanly")
+
+            let carbonNov = catalog.price(for: "gemini-4-carbon-medium", at: nov2026)
+            let carbonDec = catalog.price(for: "gemini-4-carbon-medium", at: dec2026)
+            check(carbonNov?.inputPerMillion == 2.0 && carbonNov?.outputPerMillion == 10.0, "Gemini 4 Carbon intro price before Dec 1")
+            check(carbonDec?.inputPerMillion == 4.0 && carbonDec?.outputPerMillion == 20.0, "Gemini 4 Carbon price steps up on Dec 1")
+
+            let flashNov = catalog.price(for: "gemini-3.8-flash", at: nov2026)
+            let flashJan = catalog.price(for: "gemini-3.8-flash", at: jan2027)
+            check(flashNov?.inputPerMillion == 0.75 && flashNov?.outputPerMillion == 3.75, "Gemini 3.8 Flash intro price before Jan 1, 2027")
+            check(flashJan?.inputPerMillion == 1.50 && flashJan?.outputPerMillion == 7.50, "Gemini 3.8 Flash price steps up on Jan 1, 2027")
+
+            let orchNeon = catalog.price(for: "Orchestrator (Neon)", at: nov2026)
+            let orchNeonN = catalog.price(for: "Orchestrator (Neon-n)", at: nov2026)
+            check(orchNeon?.inputPerMillion == 3.0 && orchNeon?.outputPerMillion == 15.0, "Orchestrator (Neon) must resolve to Gemini 4 Neon")
+            check(orchNeonN?.inputPerMillion == 3.0 && orchNeonN?.outputPerMillion == 15.0, "Orchestrator (Neon-n) must resolve to Gemini 4 Neon")
+            check(PricingCatalog.isGeminiQuotaFamily("Orchestrator (Neon-n)"), "Orchestrator (Neon-n) belongs to Gemini quota family")
+            check(!PricingCatalog.isGeminiQuotaFamily("claude-opus-4-6"), "Claude Opus does not belong to Gemini quota family")
+
+            let gpt54 = catalog.price(for: "gpt-5-4", at: nov2026)!
+            let shortCost = gpt54.costUSD(uncachedInput: 100_000, cacheRead: 0, output: 0)
+            let longCost = gpt54.costUSD(uncachedInput: 300_000, cacheRead: 0, output: 0)
+            let longSavings = gpt54.cacheSavingsUSD(cacheRead: 200_000, uncachedInput: 100_000)
+            check(abs(shortCost - 0.25) < 1e-6, "GPT 5.4 <=272K input must bill at $2.50/1M")
+            check(abs(longCost - 1.50) < 1e-6, "GPT 5.4 >272K input must step up to $5.00/1M")
+            check(abs(longSavings - 0.90) < 1e-6, "GPT 5.4 >272K cache savings must use stepped-up input rate ($5.00 - $0.50 = $4.50/1M)")
+        }
+
+        runner.runCase("UsageLedger & TranscriptIndex: deletion survival, throttle flush, schema guard, corrupt backup, backfill, symlink skip") {
+            let fm = FileManager.default
+            let tmp = fm.temporaryDirectory.appendingPathComponent("aum-test-ledger-\(UUID().uuidString)", isDirectory: true)
+            let brainDir = tmp.appendingPathComponent("brain", isDirectory: true)
+            let convDir = brainDir.appendingPathComponent("conv-deleted-test/.system_generated/logs", isDirectory: true)
+            let ledgerURL = tmp.appendingPathComponent("ledger.json")
+            try fm.createDirectory(at: convDir, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: tmp) }
+
+            let transcriptURL = convDir.appendingPathComponent("transcript.jsonl")
+            let line1 = #"{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-11-25T06:00:00Z","model":"unknown","input_tokens":10000,"cache_read_tokens":50000,"output_tokens":1000}"# + "\n"
+            try line1.write(to: transcriptURL, atomically: true, encoding: .utf8)
+
+            // Also place a symlinked transcript that must be ignored by TranscriptIndex.
+            let secretFile = tmp.appendingPathComponent("secret.jsonl")
+            let secretLine = #"{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-11-25T06:00:00Z","model":"gemini-4-neon-medium","input_tokens":999999,"cache_read_tokens":0,"output_tokens":1}"# + "\n"
+            try secretLine.write(to: secretFile, atomically: true, encoding: .utf8)
+            let symlinkConvDir = brainDir.appendingPathComponent("conv-symlink/.system_generated/logs", isDirectory: true)
+            try fm.createDirectory(at: symlinkConvDir, withIntermediateDirectories: true)
+            try fm.createSymbolicLink(at: symlinkConvDir.appendingPathComponent("transcript.jsonl"), withDestinationURL: secretFile)
+
+            let index = TranscriptIndex(brainDirectory: brainDir, ledgerURL: ledgerURL)
+            let first = index.refresh()
+            check(first.records.count == 1 && first.conversationCount == 1, "Initial scan must load 1 record and skip symlink")
+            check(fm.fileExists(atPath: ledgerURL.path), "Ledger file must be flushed to disk")
+
+            let attrs = try fm.attributesOfItem(atPath: ledgerURL.path)
+            let perms = (attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0
+            check((perms & 0o777) == 0o600, "Ledger file must have 0600 permissions (got \(String(perms & 0o777, radix: 8)))")
+
+            // Append second line within < 2s throttle window with real model -> must backfill unknown AND flush cleanly on flushLedger().
+            let line2 = #"{"step_index":2,"type":"PLANNER_RESPONSE","created_at":"2026-11-25T06:00:10Z","model":"gemini-4-neon-medium","input_tokens":2000,"cache_read_tokens":0,"output_tokens":200}"# + "\n"
+            let fh = try FileHandle(forWritingTo: transcriptURL)
+            try fh.seekToEnd()
+            try fh.write(contentsOf: Data(line2.utf8))
+            try fh.close()
+
+            let second = index.refresh()
+            check(second.records.count == 2, "Incremental refresh must read appended record")
+            check(second.records.allSatisfy { $0.model == "gemini-4-neon-medium" }, "Incremental refresh must backfill leading unknown model")
+            index.flushLedger()
+
+            // Delete the conversation directory and reload from a brand new TranscriptIndex instance.
+            try fm.removeItem(at: brainDir.appendingPathComponent("conv-deleted-test"))
+            let reloaded = TranscriptIndex(brainDirectory: brainDir, ledgerURL: ledgerURL)
+            let afterDelete = reloaded.refresh()
+            check(afterDelete.records.count == 2 && afterDelete.conversationCount == 1, "Throttled update flushed before delete must survive reload")
+            check(afterDelete.records.first?.inputTokens == 10000, "Preserved ledger record must retain exact token counts")
+
+            // Future schema version protection: version 99 must not be overwritten.
+            let futureURL = tmp.appendingPathComponent("future-ledger.json")
+            let futurePayload = #"{"version":99,"conversations":{}}"#
+            try futurePayload.write(to: futureURL, atomically: true, encoding: .utf8)
+            let futureLedger = UsageLedger(fileURL: futureURL)
+            _ = futureLedger.mergeAndPersist(liveByConversation: ["c1": afterDelete.records], now: Date())
+            futureLedger.flush()
+            let futureAfter = try String(contentsOf: futureURL, encoding: .utf8)
+            check(futureAfter == futurePayload, "Future ledger schema version must remain read-only on disk")
+
+            // Corrupt JSON backup protection.
+            let corruptURL = tmp.appendingPathComponent("corrupt-ledger.json")
+            try "{not valid json".write(to: corruptURL, atomically: true, encoding: .utf8)
+            let corruptLedger = UsageLedger(fileURL: corruptURL)
+            _ = corruptLedger.mergeAndPersist(liveByConversation: ["c1": afterDelete.records], now: Date())
+            let dirEntries = (try? fm.contentsOfDirectory(atPath: tmp.path)) ?? []
+            check(dirEntries.contains(where: { $0.hasPrefix("corrupt-ledger.json.corrupt-") && $0.hasSuffix(".bak") }), "Corrupt ledger must be backed up before rebuild")
+        }
+
+        runner.runCase("QuotaEstimator: Theil-Sen slope, persistence, thinning, stale-reset guard, and multi-point regime-shift") {
+            let fm = FileManager.default
+            let tmp = fm.temporaryDirectory.appendingPathComponent("aum-test-cal-\(UUID().uuidString)", isDirectory: true)
+            try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: tmp) }
+            let calURL = tmp.appendingPathComponent("calibration.json")
+
+            // Edge cases: thinSamples(limit: 2) and minPairDu <= 0 must never crash or yield inf.
+            let tinySamples = [
+                QuotaEstimator.Sample(u: 0.01, costUSD: 1, tokens: 100, requests: 1),
+                QuotaEstimator.Sample(u: 0.02, costUSD: 2, tokens: 200, requests: 2),
+                QuotaEstimator.Sample(u: 0.03, costUSD: 3, tokens: 300, requests: 3),
+            ]
+            let thinned2 = QuotaEstimator.thinSamples(tinySamples, limit: 2)
+            check(thinned2.count == 2 && thinned2.first?.u == 0.01 && thinned2.last?.u == 0.03, "thinSamples(limit: 2) must safely preserve endpoints")
+            let zeroDuSamples = [
+                QuotaEstimator.Sample(u: 0.05, costUSD: 10, tokens: 1000, requests: 1),
+                QuotaEstimator.Sample(u: 0.05, costUSD: 20, tokens: 2000, requests: 2),
+                QuotaEstimator.Sample(u: 0.05, costUSD: 30, tokens: 3000, requests: 3),
+            ]
+            check(QuotaEstimator.computeTheilSenSlope(samples: zeroDuSamples, livePoint: nil, minSpan: 0, minPairDu: 0, value: \.costUSD) == nil, "Zero du pairs must never produce +inf")
+
+            let estimator = QuotaEstimator(fileURL: calURL)
+            let reset1 = Date(timeIntervalSince1970: 1_800_000_000)
+
+            // Cross-device offset = +$100, true local slope = $600 per 100% quota.
+            _ = estimator.observeAndEstimateWeekly(accountKey: "a@test.com", resetTime: reset1, usedFraction: 0.01, spentCostUSD: 106, spentTokens: 1_000_000, requestCount: 3)
+            _ = estimator.observeAndEstimateWeekly(accountKey: "a@test.com", resetTime: reset1, usedFraction: 0.03, spentCostUSD: 118, spentTokens: 3_000_000, requestCount: 6)
+            let est1 = estimator.observeAndEstimateWeekly(accountKey: "a@test.com", resetTime: reset1, usedFraction: 0.05, spentCostUSD: 130, spentTokens: 5_000_000, requestCount: 12)
+            check(est1 != nil, "Should produce estimate once >= 3 samples spanning >= 2%")
+            check(abs((est1?.fullCostUSD ?? 0) - 600.0) < 1.0, "Theil-Sen slope must recover $600 full capacity despite $100 offset")
+
+            // Advance to >= 8% then roll into next weekly cycle to populate prior & verify disk persistence + 0600 perms.
+            _ = estimator.observeAndEstimateWeekly(accountKey: "a@test.com", resetTime: reset1, usedFraction: 0.10, spentCostUSD: 160, spentTokens: 10_000_000, requestCount: 20)
+            let calAttrs = try fm.attributesOfItem(atPath: calURL.path)
+            let calPerms = (calAttrs[.posixPermissions] as? NSNumber)?.intValue ?? 0
+            check((calPerms & 0o777) == 0o600, "Calibration file must have 0600 permissions")
+
+            let reloadedEstimator = QuotaEstimator(fileURL: calURL)
+            let reset2 = reset1.addingTimeInterval(7 * 86_400)
+            let warmStart = reloadedEstimator.observeAndEstimateWeekly(accountKey: "a@test.com", resetTime: reset2, usedFraction: 0.005, spentCostUSD: 3, spentTokens: 500_000, requestCount: 2)
+            check(warmStart?.usedPriorOnly == true && abs((warmStart?.fullCostUSD ?? 0) - 600.0) < 5.0, "Reloaded estimator must preserve prior ~$600 across restarts")
+
+            // Stale out-of-order older resetEpoch must be ignored (no backward cycle roll).
+            let staleCall = reloadedEstimator.observeAndEstimateWeekly(accountKey: "a@test.com", resetTime: reset1, usedFraction: 0.50, spentCostUSD: 300, spentTokens: 30_000_000, requestCount: 50)
+            check(staleCall == nil || abs((staleCall?.fullCostUSD ?? 0) - 600.0) < 5.0, "Out-of-order older resetEpoch must not corrupt current cycle")
+
+            // Single-point cross-device offset in reset2 (u = 0.21, local cost = $6) must NOT falsely trigger regime shift.
+            let crossDeviceSingle = reloadedEstimator.observeAndEstimateWeekly(accountKey: "a@test.com", resetTime: reset2, usedFraction: 0.21, spentCostUSD: 6, spentTokens: 600_000, requestCount: 8)
+            check(crossDeviceSingle?.isBlendedWithPrior == true && (crossDeviceSingle?.fullCostUSD ?? 0) > 200.0, "Single-point cross-device offset must stay anchored to prior, not collapse to $28")
+
+            // Genuine multi-point regime shift in reset3: official quota doubles to $1,500 full capacity (ratio 2.5x > 1.45x).
+            let reset3 = reset2.addingTimeInterval(7 * 86_400)
+            _ = reloadedEstimator.observeAndEstimateWeekly(accountKey: "a@test.com", resetTime: reset3, usedFraction: 0.02, spentCostUSD: 30, spentTokens: 2_000_000, requestCount: 4)
+            _ = reloadedEstimator.observeAndEstimateWeekly(accountKey: "a@test.com", resetTime: reset3, usedFraction: 0.04, spentCostUSD: 60, spentTokens: 4_000_000, requestCount: 8)
+            let shifted = reloadedEstimator.observeAndEstimateWeekly(accountKey: "a@test.com", resetTime: reset3, usedFraction: 0.06, spentCostUSD: 90, spentTokens: 6_000_000, requestCount: 12)
+            check(shifted?.isBlendedWithPrior == false && abs((shifted?.fullCostUSD ?? 0) - 1500.0) < 1.0, "Multi-point regime shift >1.45x must bypass stale prior")
+        }
+
+        runner.runCase("StatusLineBridgeInstaller: hardened script exits 0 even if chained command fails and sets 0600 snapshot") {
+            let fm = FileManager.default
+            let tmp = fm.temporaryDirectory.appendingPathComponent("aum-test-bridge-fail-\(UUID().uuidString)", isDirectory: true)
+            try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: tmp) }
+
+            let failingCustom = tmp.appendingPathComponent("failing.sh")
+            try "#!/bin/sh\ncat >/dev/null\necho 'PARTIAL_OUT'\nexit 42\n".write(to: failingCustom, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: failingCustom.path)
+
+            let settings: [String: Any] = ["statusLine": ["type": "command", "command": failingCustom.path]]
+            let settingsData = try JSONSerialization.data(withJSONObject: settings)
+            try settingsData.write(to: tmp.appendingPathComponent("settings.json"))
+
+            let installer = StatusLineBridgeInstaller(cliConfigDirectory: tmp)
+            _ = try installer.install()
+
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/bin/sh")
+            proc.arguments = [installer.bridgeScriptURL.path]
+            let inPipe = Pipe()
+            let outPipe = Pipe()
+            proc.standardInput = inPipe
+            proc.standardOutput = outPipe
+            try proc.run()
+            inPipe.fileHandleForWriting.write(Data(#"{"email":"safe@test.com"}"#.utf8))
+            try inPipe.fileHandleForWriting.close()
+            proc.waitUntilExit()
+
+            let outText = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            check(proc.terminationStatus == 0, "Bridge script must always exit 0 even when chained command fails")
+            check(outText == "PARTIAL_OUT", "Chained command must still receive stdin and produce stdout")
+            check(QuotaEvaluator().loadSnapshot(from: installer.snapshotURL)?.email == "safe@test.com", "Snapshot must be atomically written")
+            let snapAttrs = try fm.attributesOfItem(atPath: installer.snapshotURL.path)
+            let snapPerms = (snapAttrs[.posixPermissions] as? NSNumber)?.intValue ?? 0
+            check((snapPerms & 0o777) == 0o600, "Snapshot created by bridge script must have 0600 permissions")
+        }
+
+        runner.runCase("UsageAggregator: MAD outlier quarantine drops bursty TPS spikes") {
+            let agg = UsageAggregator()
+            let now = Date()
+            var recs: [TranscriptRecord] = []
+            // 6 normal turns: 400 output tokens / 10s = 40 tok/s
+            for i in 0..<6 {
+                recs.append(TranscriptRecord(
+                    timestamp: now.addingTimeInterval(Double(-200 + i * 10)),
+                    model: "gemini-4-neon-medium",
+                    inputTokens: 1000,
+                    cacheReadTokens: 0,
+                    outputTokens: 400,
+                    conversationId: "c1"
+                ))
+            }
+            // 1 absurd outlier turn: 780 output tokens / 2s = 390 tok/s (> 8 * 40 = 320)
+            recs.append(TranscriptRecord(
+                timestamp: now.addingTimeInterval(-148),
+                model: "gemini-4-neon-medium",
+                inputTokens: 1000,
+                cacheReadTokens: 0,
+                outputTokens: 780,
+                conversationId: "c1"
+            ))
+            let report = agg.aggregate(records: recs, conversationCount: 1, now: now)
+            let avg = report.outputSpeed.recent5mTokPerSec ?? 0
+            check(avg >= 35.0 && avg <= 45.0, "MAD quarantine must exclude 390 tok/s spike and keep ~40 tok/s average (got \(avg))")
+        }
+
         print("Summary: \(runner.passed) assertions passed, \(runner.failed) failed.")
         if runner.failed > 0 {
             exit(1)

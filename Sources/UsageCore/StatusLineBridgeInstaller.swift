@@ -90,7 +90,11 @@ public struct StatusLineBridgeInstaller: Sendable {
     public func install() throws -> BridgeStatus {
         let fm = FileManager.default
         do {
-            try fm.createDirectory(at: cliConfigDirectory, withIntermediateDirectories: true)
+            try fm.createDirectory(
+                at: cliConfigDirectory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
         } catch {
             throw BridgeInstallerError.ioError(error.localizedDescription)
         }
@@ -201,25 +205,27 @@ public struct StatusLineBridgeInstaller: Sendable {
         let escapedSnapshot = shellSingleQuote(snapshotURL.path)
         var lines: [String] = [
             "#!/bin/sh",
-            "# Managed by Antigravity Usage Monitor (safe statusLine bridge).",
-            "set -eu",
+            "# Managed by Antigravity Usage Monitor (safe statusLine bridge; always exits 0).",
+            "umask 077",
             "SNAPSHOT=\(escapedSnapshot)",
-            "TMP_FILE=\"${SNAPSHOT}.tmp.$$\"",
-            "cat > \"$TMP_FILE\"",
-            "mv -f \"$TMP_FILE\" \"$SNAPSHOT\"",
+            "TMP_FILE=$(/usr/bin/mktemp \"${SNAPSHOT}.tmp.XXXXXX\" 2>/dev/null) || TMP_FILE=\"\"",
+            "if [ -n \"$TMP_FILE\" ] && cat > \"$TMP_FILE\" 2>/dev/null; then",
         ]
 
         if let chainedCommand, !chainedCommand.isEmpty {
             let escapedOriginal = shellSingleQuote(chainedCommand)
-            lines.append("exec /bin/sh -c \(escapedOriginal) < \"$SNAPSHOT\"")
-        } else {
-            lines.append("exit 0")
+            lines.append("    /bin/sh -c \(escapedOriginal) < \"$TMP_FILE\" || true")
         }
+        lines.append("    mv -f \"$TMP_FILE\" \"$SNAPSHOT\" 2>/dev/null || rm -f \"$TMP_FILE\" 2>/dev/null || true")
+        lines.append("elif [ -n \"$TMP_FILE\" ]; then")
+        lines.append("    rm -f \"$TMP_FILE\" 2>/dev/null || true")
+        lines.append("fi")
+        lines.append("exit 0")
 
         let content = lines.joined(separator: "\n") + "\n"
         do {
             try content.write(to: bridgeScriptURL, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bridgeScriptURL.path)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: bridgeScriptURL.path)
         } catch {
             throw BridgeInstallerError.ioError("写入桥接脚本失败：\(error.localizedDescription)")
         }
