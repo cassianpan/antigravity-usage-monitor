@@ -13,6 +13,7 @@ for cache hit rate, model split, and API-equivalent spend. Native Swift 6, zero 
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-2b2b2b?style=flat-square&logo=apple&logoColor=white)](#install)
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white)](Package.swift)
 [![License: MIT](https://img.shields.io/badge/license-MIT-4a4a4a?style=flat-square)](LICENSE)
+[![LINUX DO](https://img.shields.io/badge/LINUX_DO-Community-2b2b2b?style=flat-square)](https://linux.do)
 
 [**Download**](https://github.com/cassianpan/antigravity-usage-monitor/releases/latest) · [中文说明](README.zh-CN.md) · [Changelog](CHANGELOG.md)
 
