@@ -150,4 +150,27 @@ final class UpgradeRegressionTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(avg, 35.0)
         XCTAssertLessThanOrEqual(avg, 45.0)
     }
+
+    func testSilentCLISyncerAuthFailureClassification() {
+        let networkEOFFail = """
+        I1127 16:39:24.641 keyring.go:64] keyringAuth: loaded token, expiry=2026-11-27 16:42:25 +0800 CST expired=false
+        W1127 16:39:29.648 browser.go:256] token refresh failed due to network error: Post "https://oauth2.googleapis.com/token": EOF
+        """
+        if case .failed = SilentCLISyncer.classifyAuthProbeFailure(logText: networkEOFFail, sawAuthenticatingTimeout: true) {
+            // expected
+        } else {
+            XCTFail("Transient network error during OAuth refresh must not return .authRequired")
+        }
+
+        let wakeTimeout = "I1126 19:03:28.164 keyring.go:64] keyringAuth: loaded token, expired=false"
+        if case .failed = SilentCLISyncer.classifyAuthProbeFailure(logText: wakeTimeout, sawAuthenticatingTimeout: true) {
+            // expected
+        } else {
+            XCTFail("Loaded keyring token timeout must not return .authRequired")
+        }
+
+        let revoked = #"E1128 browser.go:260] {"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#
+        XCTAssertEqual(SilentCLISyncer.classifyAuthProbeFailure(logText: revoked, sawAuthenticatingTimeout: false), .authRequired)
+        XCTAssertEqual(SilentCLISyncer.classifyAuthProbeFailure(logText: "", sawAuthenticatingTimeout: true), .authRequired)
+    }
 }

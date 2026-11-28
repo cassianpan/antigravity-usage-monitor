@@ -264,8 +264,10 @@ struct PanelView: View {
             .buttonStyle(.plain)
 
             if !preferences.limitsCollapsed {
+                let persistentAuthState = store.officialReport.agentState == "authenticating"
+                    && (store.officialReport.staleAgeSeconds ?? 0) >= 15
                 let needsLogin = store.officialAuthRequired
-                    || store.officialReport.agentState == "authenticating"
+                    || persistentAuthState
                     || (store.officialReport.hasSnapshot && (store.officialReport.email?.isEmpty ?? true))
 
                 if !store.officialReport.hasSnapshot || store.officialReport.buckets.isEmpty {

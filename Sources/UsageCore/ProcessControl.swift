@@ -290,6 +290,7 @@ public enum AgySyncWrapper {
     public static func run(arguments: [String]) -> Int32 {
         var agyPath: String?
         var settingsPath: String?
+        var logFilePath: String?
         var cwdPath: String?
         var timeoutSeconds: Double = 12.0
         var watchdogFD: Int32 = 3
@@ -304,6 +305,8 @@ public enum AgySyncWrapper {
                 agyPath = next; i += 2
             case "--settings":
                 settingsPath = next; i += 2
+            case "--log-file":
+                logFilePath = next; i += 2
             case "--cwd":
                 cwdPath = next; i += 2
             case "--timeout":
@@ -338,10 +341,14 @@ public enum AgySyncWrapper {
         do {
             var env = CLIProbeSupport.defaultEnvironment()
             env["TERM"] = "xterm-256color"
+            var agyArgs = ["--settings", settingsPath]
+            if let logFilePath, !logFilePath.isEmpty {
+                agyArgs.append(contentsOf: ["--log-file", logFilePath])
+            }
             childPID = try PosixSpawn.spawn(
                 PosixSpawn.Options(
                     executable: agyPath,
-                    arguments: ["--settings", settingsPath],
+                    arguments: agyArgs,
                     environment: env,
                     inheritFDs: [STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO],
                     setProcessGroup: true,

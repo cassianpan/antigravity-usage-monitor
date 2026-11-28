@@ -798,6 +798,42 @@ struct UsageCoreSelfTest {
             check(avg >= 35.0 && avg <= 45.0, "MAD quarantine must exclude 390 tok/s spike and keep ~40 tok/s average (got \(avg))")
         }
 
+        runner.runCase("SilentCLISyncer: classifies transient OAuth network errors vs genuine auth revocation") {
+            let networkEOFFail = """
+            I1127 16:39:24.641 keyring.go:64] keyringAuth: loaded token, expiry=2026-11-27 16:42:25 +0800 CST expired=false
+            W1127 16:39:29.648 browser.go:256] token refresh failed due to network error: Post "https://oauth2.googleapis.com/token": EOF
+            W1127 16:39:29.648 keyring.go:74] keyringAuth: token validation failed due to network error (token may still be valid)
+            """
+            if case .failed = SilentCLISyncer.classifyAuthProbeFailure(logText: networkEOFFail, sawAuthenticatingTimeout: true) {
+                check(true, "Network EOF during OAuth refresh must be treated as transient failure, not authRequired")
+            } else {
+                check(false, "Network EOF during OAuth refresh falsely returned authRequired")
+            }
+
+            let wakeTimeoutLog = """
+            I1126 19:03:28.164 keyring.go:64] keyringAuth: loaded token, expiry=2026-11-26 19:03:34 +0800 CST expired=false
+            """
+            if case .failed = SilentCLISyncer.classifyAuthProbeFailure(logText: wakeTimeoutLog, sawAuthenticatingTimeout: true) {
+                check(true, "Loaded keyring token timing out on wake must not falsely claim logged out")
+            } else {
+                check(false, "Loaded keyring token timeout falsely returned authRequired")
+            }
+
+            let revokedLog = """
+            I1128 08:00:01.000 keyring.go:64] keyringAuth: loaded token, expiry=2026-11-28 07:00:00 +0800 CST expired=true
+            E1128 08:00:02.000 browser.go:260] oauth2: cannot fetch token: 400 Bad Request {"error":"invalid_grant","error_description":"Token has been expired or revoked."}
+            """
+            check(
+                SilentCLISyncer.classifyAuthProbeFailure(logText: revokedLog, sawAuthenticatingTimeout: false) == .authRequired,
+                "Definitive invalid_grant revocation must return authRequired"
+            )
+
+            check(
+                SilentCLISyncer.classifyAuthProbeFailure(logText: "", sawAuthenticatingTimeout: true) == .authRequired,
+                "Authenticating timeout with no keyring token must return authRequired"
+            )
+        }
+
         print("Summary: \(runner.passed) assertions passed, \(runner.failed) failed.")
         if runner.failed > 0 {
             exit(1)

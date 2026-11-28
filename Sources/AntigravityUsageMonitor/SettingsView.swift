@@ -375,7 +375,7 @@ struct SettingsView: View {
 
             HStack(spacing: 10) {
                 Button {
-                    Task { await store.syncOfficialInBackground(force: true) }
+                    Task { await store.syncOfficialInBackground(force: true, userInitiated: true) }
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.clockwise")

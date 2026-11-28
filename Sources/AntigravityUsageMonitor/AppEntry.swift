@@ -191,7 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         interaction.triggerRefreshSpin()
         store.refreshNow()
         Task { [weak self] in
-            await self?.store.syncOfficialInBackground(force: true)
+            await self?.store.syncOfficialInBackground(force: true, userInitiated: true)
         }
     }
 

@@ -153,6 +153,11 @@ final class UsageMonitorStore {
     private var lastObservedSnapshotSignature: String? = nil
     private var watcherDebounceTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
+    private var retrySyncTask: Task<Void, Never>?
+    private var wakeGraceUntil: Date = .distantPast
+    private var consecutiveAuthRequiredCount: Int = 0
+    private var transientRetryAttempt: Int = 0
+    @ObservationIgnored private var wakeObserver: NSObjectProtocol?
     private var lastAutoSyncAttempt: Date = .distantPast
     private var lastUpdateCheckAt: Date = .distantPast
     private var lastSeenTotalTokens: Int = 0
@@ -181,6 +186,7 @@ final class UsageMonitorStore {
         refreshNow()
         startTimer()
         startSnapshotWatcher()
+        startWakeObserver()
 
         Task { [weak self] in
             await self?.syncOfficialInBackground(force: true)
@@ -520,8 +526,14 @@ final class UsageMonitorStore {
 
             let age = payload.officialReport.staleAgeSeconds ?? .infinity
             let sinceLastAttempt = now.timeIntervalSince(self.lastAutoSyncAttempt)
-            if !self.isSyncingOfficial && sinceLastAttempt >= 90 {
-                if !payload.officialReport.hasSnapshot || age >= 300 || (tokensIncreased && age >= 120) {
+            if !self.isSyncingOfficial && now >= self.wakeGraceUntil && sinceLastAttempt >= 90 {
+                let needsPeriodicSync = !payload.officialReport.hasSnapshot
+                    || age >= 300
+                    || (tokensIncreased && age >= 120)
+                let needsAuthSelfHeal = self.officialAuthRequired
+                    && (payload.officialReport.email?.isEmpty == false)
+                    && sinceLastAttempt >= 120
+                if needsPeriodicSync || needsAuthSelfHeal {
                     Task { [weak self] in
                         await self?.syncOfficialInBackground(force: false)
                     }
@@ -537,14 +549,21 @@ final class UsageMonitorStore {
 
     /// Flushes any throttled local ledger mutations immediately (called on app quit / SIGTERM).
     func flushPendingState() {
+        retrySyncTask?.cancel()
+        if let wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+            self.wakeObserver = nil
+        }
         transcriptIndex.flushLedger()
     }
 
-    func syncOfficialInBackground(force: Bool) async {
+    func syncOfficialInBackground(force: Bool, userInitiated: Bool = false) async {
         guard !isSyncingOfficial else { return }
         if !force, Date().timeIntervalSince(lastAutoSyncAttempt) < 90 {
             return
         }
+        retrySyncTask?.cancel()
+        retrySyncTask = nil
         isSyncingOfficial = true
         onSyncStateChanged?(true)
         lastAutoSyncAttempt = Date()
@@ -555,21 +574,64 @@ final class UsageMonitorStore {
 
         switch result {
         case .synced:
+            consecutiveAuthRequiredCount = 0
+            transientRetryAttempt = 0
             officialAuthRequired = false
             bridgeFeedback = nil
             refreshNow()
         case .authRequired:
-            officialAuthRequired = true
-            bridgeFeedback = preferences.language.isChinese
-                ? "agy CLI 需要重新登录，点击下方按钮在终端完成登录后即可关闭终端。"
-                : "agy CLI requires sign-in. Complete login in Terminal once, then you can close Terminal."
+            let hasKnownAccount = officialReport.hasSnapshot && (officialReport.email?.isEmpty == false)
+            if hasKnownAccount && consecutiveAuthRequiredCount == 0 && !userInitiated {
+                // Guard against single-shot proxy/wake glitches on a previously signed-in account:
+                // confirm once silently in 15s before surfacing the sign-in warning banner.
+                consecutiveAuthRequiredCount = 1
+                scheduleSilentRetry(afterSeconds: 15, force: true)
+            } else {
+                consecutiveAuthRequiredCount += 1
+                officialAuthRequired = true
+                bridgeFeedback = preferences.language.isChinese
+                    ? "agy CLI 需要重新登录，点击下方按钮在终端完成登录后即可关闭终端。"
+                    : "agy CLI requires sign-in. Complete login in Terminal once, then you can close Terminal."
+            }
         case .cliNotFound:
             bridgeFeedback = preferences.language.isChinese
                 ? "未找到 agy CLI，请先安装 Antigravity CLI。"
                 : "agy CLI not found. Please install Antigravity CLI first."
         case .failed(let msg):
-            if force {
+            if userInitiated {
                 bridgeFeedback = msg
+            }
+            // Automatically self-heal transient network/proxy hiccups with bounded backoff (30s -> 60s -> 120s).
+            let backoffSeconds = [30, 60, 120]
+            if transientRetryAttempt < backoffSeconds.count {
+                let delay = backoffSeconds[transientRetryAttempt]
+                transientRetryAttempt += 1
+                scheduleSilentRetry(afterSeconds: delay, force: true)
+            }
+        }
+    }
+
+    private func scheduleSilentRetry(afterSeconds seconds: Int, force: Bool) {
+        retrySyncTask?.cancel()
+        retrySyncTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled, let self else { return }
+            await self.syncOfficialInBackground(force: force, userInitiated: false)
+        }
+    }
+
+    private func startWakeObserver() {
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // Wait 5 seconds after system wake for Wi-Fi / proxy to reconnect before syncing.
+                self.wakeGraceUntil = Date().addingTimeInterval(5.0)
+                self.transientRetryAttempt = 0
+                self.scheduleSilentRetry(afterSeconds: 5, force: true)
             }
         }
     }

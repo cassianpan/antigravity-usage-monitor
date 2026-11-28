@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-11-28
+
+### Fixed
+
+- **Eliminated false-positive "agy CLI sign-in required" alerts during network/proxy hiccups or Mac wake**: Background silent sync probes now pass `--log-file <tempDir>/probe.log` to `agy` and inspect the flushed log before declaring `.authRequired`, distinguishing genuine server revocation (`invalid_grant` / missing keyring credential) from transient OAuth refresh network errors (`EOF` / timeout / TLS) or loaded keyring tokens waiting for network recovery.
+- **System wake grace period & automatic silent self-healing**: Added `NSWorkspace.didWakeNotification` handling (5-second post-wake grace before syncing), two-step silent confirmation for previously signed-in accounts before surfacing a re-login banner, bounded automatic retry backoff (`30s → 60s → 120s`) on transient failures, and a 15-second boot-state guard in the panel header.
+- **Zero probe log accumulation in `~/.gemini/antigravity-cli/log/`**: Ephemeral silent sync probes now write logs solely inside their auto-cleaned temporary directory instead of leaving a new log file on disk every 5 minutes.
+
 ## [0.1.10] - 2026-11-25
 
 ### Added

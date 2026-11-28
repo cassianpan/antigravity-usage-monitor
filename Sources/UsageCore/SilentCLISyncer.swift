@@ -104,6 +104,7 @@ public actor SilentCLISyncer {
         defer { try? fm.removeItem(at: tempDir) }
 
         let tempSnapshotURL = tempDir.appendingPathComponent("probe.json")
+        let tempLogURL = tempDir.appendingPathComponent("probe.log")
         let settingsURL: URL
         do {
             let probeScriptURL = try CLIProbeSupport.writeProbeScript(outputURL: tempSnapshotURL, into: tempDir)
@@ -156,6 +157,7 @@ public actor SilentCLISyncer {
                             AgySyncWrapper.flag,
                             "--agy", agyURL.path,
                             "--settings", settingsURL.path,
+                            "--log-file", tempLogURL.path,
                             "--cwd", tempDir.path,
                             "--timeout", String(format: "%.1f", timeoutSeconds),
                             "--watchdog-fd", "3",
@@ -221,7 +223,7 @@ public actor SilentCLISyncer {
                 agyPID = try PosixSpawn.spawn(
                     PosixSpawn.Options(
                         executable: agyURL.path,
-                        arguments: ["--settings", settingsURL.path],
+                        arguments: ["--settings", settingsURL.path, "--log-file", tempLogURL.path],
                         environment: env,
                         dup2Map: [
                             (slaveFD, STDIN_FILENO),
@@ -257,7 +259,10 @@ public actor SilentCLISyncer {
 
         activeChildPID = agyPID > 0 ? agyPID : wrapperPID
 
-        defer {
+        var didCleanupChild = false
+        func stopChildIfNeeded() {
+            guard !didCleanupChild else { return }
+            didCleanupChild = true
             if usingNativeWrapper {
                 // Signal graceful stop ("G") then close pipe.
                 if wdWriteFD >= 0 {
@@ -312,6 +317,7 @@ public actor SilentCLISyncer {
             activeChildPID = nil
             _ = close(masterFD)
         }
+        defer { stopChildIfNeeded() }
 
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         var firstQuotaAt: Date?
@@ -339,7 +345,7 @@ public actor SilentCLISyncer {
                 } else if parsed.agentState == "authenticating" && (parsed.email?.isEmpty ?? true) {
                     if firstAuthAt == nil {
                         firstAuthAt = Date()
-                    } else if Date().timeIntervalSince(firstAuthAt!) >= 5.0 {
+                    } else if Date().timeIntervalSince(firstAuthAt!) >= 7.5 {
                         sawAuthRequired = true
                         break
                     }
@@ -358,20 +364,72 @@ public actor SilentCLISyncer {
             try? await Task.sleep(for: .milliseconds(200))
         }
 
-        if sawAuthRequired {
+        // Stop child cleanly before inspecting probe.log so agy flushes its final log lines.
+        stopChildIfNeeded()
+
+        if let captured = latestSnapshot, let quota = captured.quota, !quota.isEmpty {
+            do {
+                let merged = try CLIProbeSupport.persistSnapshot(captured, to: snapshotURL, evaluator: evaluator)
+                return .synced(merged)
+            } catch {
+                return .failed("保存官方快照失败：\(error.localizedDescription)")
+            }
+        }
+
+        let probeLogText = (try? String(contentsOf: tempLogURL, encoding: .utf8)) ?? ""
+        return Self.classifyAuthProbeFailure(
+            logText: probeLogText,
+            sawAuthenticatingTimeout: sawAuthRequired
+        )
+    }
+
+    /// Distinguishes genuine sign-out/revocation from transient network/proxy errors during OAuth refresh.
+    public nonisolated static func classifyAuthProbeFailure(
+        logText: String,
+        sawAuthenticatingTimeout: Bool
+    ) -> SilentSyncResult {
+        let lower = logText.lowercased()
+
+        // 1. Definitive server/keyring auth revocation -> genuinely needs sign-in.
+        let hasDefinitiveRevocation = lower.contains("invalid_grant")
+            || lower.contains("token has been expired or revoked")
+            || lower.contains("refresh token revoked")
+            || lower.contains("keyringauth: no token")
+            || lower.contains("secret not found in keyring")
+        if hasDefinitiveRevocation && !lower.contains("oauth: authenticated successfully") {
             return .authRequired
         }
 
-        guard let captured = latestSnapshot, let quota = captured.quota, !quota.isEmpty else {
-            return .failed("超时未获取到官方额度，请确认 agy CLI 已登录")
+        // 2. Network / proxy hiccup during OAuth token validation or refresh -> transient failure, NOT sign-out.
+        let hasNetworkError = lower.contains("token refresh failed due to network error")
+            || lower.contains("token validation failed due to network error")
+            || lower.contains("oauth2.googleapis.com/token") && (
+                lower.contains("eof")
+                || lower.contains("timeout")
+                || lower.contains("connection refused")
+                || lower.contains("no such host")
+                || lower.contains("network is unreachable")
+                || lower.contains("tls")
+                || lower.contains("connection reset")
+            )
+        if hasNetworkError {
+            return .failed("网络或代理波动导致 OAuth 校验暂时失败，稍后将自动重试")
         }
 
-        do {
-            let merged = try CLIProbeSupport.persistSnapshot(captured, to: snapshotURL, evaluator: evaluator)
-            return .synced(merged)
-        } catch {
-            return .failed("保存官方快照失败：\(error.localizedDescription)")
+        // 3. Keychain already holds a token (or OAuth succeeded) and wasn't revoked -> never falsely claim logged out.
+        if lower.contains("oauth: authenticated successfully") {
+            return .failed("已通过登录校验，但拉取官方额度超时，稍后将自动重试")
         }
+        if lower.contains("keyringauth: loaded token") {
+            return .failed("后台登录态校验超时（本地凭证仍在），稍后将自动重试")
+        }
+
+        // 4. Persisted in authenticating state with no keyring token and no network error -> genuinely needs login.
+        if sawAuthenticatingTimeout {
+            return .authRequired
+        }
+
+        return .failed("超时未获取到官方额度，稍后将自动重试")
     }
 
     // MARK: - Startup Orphan Probe Sweeper
