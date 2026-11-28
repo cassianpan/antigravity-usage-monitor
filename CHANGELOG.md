@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-11-28
+
+### Added
+
+- **Live running-agent breathing indicator in menu bar**: Reads local Antigravity desktop and CLI `conversation_summaries.db` in strict read-only SQLite mode (zero private APIs, zero third-party deps) to display currently running top-level agents between the 4-point star icon and quota columns as a brand-blue radial-bloom breathing dot paired with a synchronized blue count (automatically hidden when idle, respects macOS Reduce Motion, and stops its timer at zero wakeups when idle). Configurable via **Settings › Menu bar**.
+- **Running-agent badges & session hover tooltips in Active Processes**: Displays a borderless `N running` indicator beside the Active Processes header and `Antigravity` / `agy CLI` rows; hovering lists active conversation titles, rolled-up subagent counts (`+N sub`), and relative active timestamps.
+
 ## [0.1.11] - 2026-11-28
 
 ### Fixed

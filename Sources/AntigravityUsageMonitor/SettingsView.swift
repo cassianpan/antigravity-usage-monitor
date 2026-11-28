@@ -100,6 +100,39 @@ struct SettingsView: View {
 
                     HStack(spacing: columns.count == 1 ? 5 : 8) {
                         BrandMarkView(size: 15, color: Palette.accent)
+                        if preferences.showRunningAgentsInMenuBar {
+                            let previewCount = store.runningAgents.totalCount > 0 ? store.runningAgents.totalCount : 2
+                            if columns.count == 1 {
+                                HStack(spacing: 3) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(Color(hex: 0x4F8CFF).opacity(0.34))
+                                            .frame(width: 8, height: 8)
+                                        Circle()
+                                            .fill(Color(hex: 0x7AB8FF))
+                                            .frame(width: 4.2, height: 4.2)
+                                    }
+                                    Text("\(previewCount)")
+                                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(Color(hex: 0x8EC0FF))
+                                }
+                                .padding(.trailing, 4)
+                            } else {
+                                VStack(spacing: 1.5) {
+                                    ZStack {
+                                        Circle()
+                                            .fill(Color(hex: 0x4F8CFF).opacity(0.34))
+                                            .frame(width: 8, height: 8)
+                                        Circle()
+                                            .fill(Color(hex: 0x7AB8FF))
+                                            .frame(width: 4.2, height: 4.2)
+                                    }
+                                    Text("\(previewCount)")
+                                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(Color(hex: 0x8EC0FF))
+                                }
+                            }
+                        }
                         if columns.count == 1, let only = columns.first {
                             Text(only.value)
                                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
@@ -141,11 +174,18 @@ struct SettingsView: View {
                 Text(zh ? "菜单栏显示项" : "Menu bar values")
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(Palette.text)
-                Text(zh ? "亮起的数值会显示在菜单栏，点击即可开启或关闭（默认仅显示 5H）。" : "Lit values appear in the menu bar. Click to toggle (5H only by default).")
+                Text(zh ? "亮起的数值会显示在菜单栏，点击即可开启或关闭（Agent 呼吸灯空闲时自动隐藏）。" : "Lit values appear in the menu bar. Click to toggle (Agent light hides when idle).")
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.secondary)
 
                 HStack(spacing: 0) {
+                    metricTogglePill(
+                        label: zh ? "运行" : "AGENTS",
+                        sample: "\(store.runningAgents.totalCount)",
+                        isOn: $preferences.showRunningAgentsInMenuBar,
+                        accentHex: 0x7AB8FF
+                    )
+                    pillSeparator
                     metricTogglePill(
                         label: "5H",
                         sample: store.officialReport.primaryFiveHour.map { "\($0.usedPercentageInt)%" } ?? "--",

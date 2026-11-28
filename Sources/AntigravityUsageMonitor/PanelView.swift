@@ -114,26 +114,88 @@ struct PanelView: View {
 
     // MARK: - Processes Row
 
+    private func runningAgentsTip(agents: [RunningAgentInfo], l10n: L10n) -> Tip? {
+        guard !agents.isEmpty else { return nil }
+        let now = Date()
+        let rows: [Tip.Row] = agents.prefix(8).map { agent in
+            let title = agent.title.count > 30 ? String(agent.title.prefix(29)) + "…" : agent.title
+            let ageText: String = {
+                guard let modified = agent.lastModifiedAt else { return "" }
+                let age = max(0, now.timeIntervalSince(modified))
+                if age < 60 { return l10n.zh ? "刚刚" : "now" }
+                return UsageFormatter.relativeAge(age)
+            }()
+            let rightValue: String
+            if agent.subagentCount > 0 {
+                let subLabel = l10n.zh ? "+\(agent.subagentCount) 子任务" : "+\(agent.subagentCount) sub"
+                rightValue = ageText.isEmpty ? subLabel : "\(subLabel) · \(ageText)"
+            } else {
+                rightValue = ageText.isEmpty ? (l10n.zh ? "运行中" : "Running") : ageText
+            }
+            return Tip.Row(title, rightValue, color: Palette.secondary, dot: Color(hex: 0x7AB8FF))
+        }
+        let extra = agents.count - 8
+        let note = extra > 0
+            ? (l10n.zh ? "另有 \(extra) 个运行中会话" : "+\(extra) more running")
+            : nil
+        return Tip(
+            title: l10n.zh ? "运行中的 Agent（\(agents.count)）" : "Running Agents (\(agents.count))",
+            rows: rows,
+            note: note
+        )
+    }
+
+    private func runningAgentBadge(count: Int, l10n: L10n) -> some View {
+        HStack(spacing: 4.5) {
+            ZStack {
+                Circle()
+                    .fill(Color(hex: 0x4F8CFF).opacity(0.28))
+                    .frame(width: 8, height: 8)
+                Circle()
+                    .fill(Color(hex: 0x7AB8FF))
+                    .frame(width: 4.2, height: 4.2)
+            }
+            Text(l10n.zh ? "\(count) 运行中" : "\(count) running")
+                .font(.system(size: 11, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(Color(hex: 0x7AB8FF).opacity(0.92))
+        }
+        .contentShape(Rectangle())
+    }
+
     private func processesRow(l10n: L10n) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Button {
-                preferences.processesExpanded.toggle()
-            } label: {
-                HStack(spacing: 5) {
-                    Text(l10n.processes)
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(Palette.secondary)
-                    Image(systemName: preferences.processesExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Palette.tertiary)
-                    Spacer()
-                    Text("\(store.runningProcesses.count)")
-                        .font(.system(size: 11.5, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Palette.secondary)
+            HStack(spacing: 6) {
+                Button {
+                    preferences.processesExpanded.toggle()
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(l10n.processes)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(Palette.secondary)
+                        Image(systemName: preferences.processesExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Palette.tertiary)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+
+                if store.runningAgents.totalCount > 0 {
+                    runningAgentBadge(count: store.runningAgents.totalCount, l10n: l10n)
+                        .panelTip("proc.agents.header", center: tipCenter, alignment: .trailing) {
+                            runningAgentsTip(agents: store.runningAgents.allAgents, l10n: l10n)
+                        }
+                    Text("·")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Palette.quaternary)
+                }
+
+                Text("\(store.runningProcesses.count)")
+                    .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(store.runningAgents.totalCount > 0 ? Palette.tertiary : Palette.secondary)
             }
-            .buttonStyle(.plain)
 
             if preferences.processesExpanded || preferences.processesSectionDensity == .detailed {
                 if store.runningProcesses.isEmpty {
@@ -145,6 +207,15 @@ struct PanelView: View {
                         ForEach(store.runningProcesses) { proc in
                             let isHovered = interaction.hoveredProcessId == proc.id
                             let isTerminating = store.terminatingProcessIds.contains(proc.id)
+                            let rowAgents: [RunningAgentInfo] = {
+                                if proc.name == "Antigravity" {
+                                    return store.runningAgents.desktopAgents
+                                }
+                                if proc.name == "agy CLI" {
+                                    return store.runningAgents.cliAgents
+                                }
+                                return []
+                            }()
                             HStack(spacing: 6) {
                                 Circle()
                                     .fill(proc.isDetached ? Palette.warning : Palette.live)
@@ -152,6 +223,12 @@ struct PanelView: View {
                                 Text(proc.name)
                                     .font(.system(size: 11))
                                     .foregroundStyle(Palette.text)
+                                if !rowAgents.isEmpty {
+                                    runningAgentBadge(count: rowAgents.count, l10n: l10n)
+                                        .panelTip("proc.agents.row.\(proc.id)", center: tipCenter, alignment: .leading) {
+                                            runningAgentsTip(agents: rowAgents, l10n: l10n)
+                                        }
+                                }
                                 if proc.isDetached {
                                     Text(l10n.zh ? "无终端" : "Detached")
                                         .font(.system(size: 9, weight: .medium))

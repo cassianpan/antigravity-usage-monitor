@@ -76,8 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var globalClickMonitor: Any?
     private var localKeyMonitor: Any?
-    private var menuBarSpinTimer: Timer?
+    private var menuBarAnimTimer: Timer?
+    private var menuBarSpinning: Bool = false
     private var menuBarSpinAngle: CGFloat = 0
+    private var menuBarBreathPhase: CGFloat = .pi
     private var disclosureTracks: [String: DisclosureTrack] = [:]
     private var disclosureDisplayLink: CADisplayLink?
     private var liveRefreshTimer: Timer?
@@ -411,27 +413,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setMenuBarSpinning(_ spinning: Bool) {
-        if spinning {
-            guard menuBarSpinTimer == nil else { return }
-            menuBarSpinTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+        menuBarSpinning = spinning
+        if !spinning {
+            menuBarSpinAngle = 0
+        }
+        syncMenuBarAnimationTimer()
+        updateStatusButton()
+    }
+
+    private func activeMenuBarAgentCount() -> Int {
+        preferences.showRunningAgentsInMenuBar ? store.runningAgents.totalCount : 0
+    }
+
+    private func syncMenuBarAnimationTimer() {
+        let shouldBreathe = activeMenuBarAgentCount() > 0 && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let needsTimer = menuBarSpinning || shouldBreathe
+
+        if needsTimer {
+            guard menuBarAnimTimer == nil else { return }
+            menuBarAnimTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
                 Task { @MainActor in
                     guard let self else { return }
-                    self.menuBarSpinAngle += (.pi * 2.0) / 28.0
-                    if self.menuBarSpinAngle >= .pi * 2.0 {
-                        self.menuBarSpinAngle -= .pi * 2.0
+                    if self.menuBarSpinning {
+                        self.menuBarSpinAngle += (.pi * 2.0) / 28.0
+                        if self.menuBarSpinAngle >= .pi * 2.0 {
+                            self.menuBarSpinAngle -= .pi * 2.0
+                        }
+                    }
+                    if self.activeMenuBarAgentCount() > 0 && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                        self.menuBarBreathPhase += (.pi * 2.0) / 40.0
+                        if self.menuBarBreathPhase >= .pi * 2.0 {
+                            self.menuBarBreathPhase -= .pi * 2.0
+                        }
+                    } else {
+                        self.menuBarBreathPhase = .pi
                     }
                     self.updateStatusButton()
                 }
             }
         } else {
-            menuBarSpinTimer?.invalidate()
-            menuBarSpinTimer = nil
+            menuBarAnimTimer?.invalidate()
+            menuBarAnimTimer = nil
             menuBarSpinAngle = 0
-            updateStatusButton()
+            menuBarBreathPhase = .pi
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        menuBarAnimTimer?.invalidate()
+        menuBarAnimTimer = nil
         store.flushPendingState()
         ActiveSyncProcessRegistry.shared.terminateAllImmediately()
     }
@@ -451,13 +481,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusButton() {
+        syncMenuBarAnimationTimer()
         guard let button = statusItem.button else { return }
+        let agentCount = activeMenuBarAgentCount()
+        let phase: CGFloat = (agentCount > 0 && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+            ? menuBarBreathPhase
+            : .pi
         button.title = ""
         button.attributedTitle = NSAttributedString(string: "")
         button.imagePosition = .imageOnly
         button.image = MenuBarRenderer.render(
             columns: store.menuBarColumns(),
-            spinAngleRadians: menuBarSpinAngle
+            spinAngleRadians: menuBarSpinAngle,
+            runningAgentCount: agentCount,
+            breathingPhase: phase
         )
     }
 }

@@ -68,6 +68,7 @@ private struct RefreshPayload: Sendable {
     let localReport: LocalUsageReport
     let weeklyCapacityEstimate: QuotaCapacityEstimate?
     let runningProcesses: [RunningProcessInfo]
+    let runningAgents: RunningAgentSummary
 }
 
 @MainActor
@@ -77,6 +78,7 @@ final class UsageMonitorStore {
     private let aggregator: UsageAggregator
     private let quotaEvaluator: QuotaEvaluator
     private let quotaEstimator: QuotaEstimator
+    private let runningAgentDetector: RunningAgentDetector
     private let silentSyncer: SilentCLISyncer
     private let updateChecker: UpdateChecker
     let bridgeInstaller: StatusLineBridgeInstaller
@@ -87,6 +89,7 @@ final class UsageMonitorStore {
     var weeklyCapacityEstimate: QuotaCapacityEstimate? = nil
     var bridgeStatus: BridgeStatus = .notInstalled(existingCommand: nil)
     var runningProcesses: [RunningProcessInfo] = []
+    var runningAgents: RunningAgentSummary = .empty
     var terminatingProcessIds: Set<Int32> = []
     var bridgeFeedback: String?
     var isRefreshing: Bool = false
@@ -147,6 +150,10 @@ final class UsageMonitorStore {
     var onSyncStateChanged: ((Bool) -> Void)?
 
     private var timer: Timer?
+    private var agentPollTimer: Timer?
+    private var agentPollTask: Task<Void, Never>?
+    private var lastAgentDBSignature: String = ""
+    private var agentPollTick: Int = 0
     private var loginTerminalWatchTask: Task<Void, Never>?
     private var directoryWatcher: DispatchSourceFileSystemObject?
     private var watchedFD: Int32 = -1
@@ -178,6 +185,7 @@ final class UsageMonitorStore {
         self.aggregator = UsageAggregator()
         self.quotaEvaluator = QuotaEvaluator()
         self.quotaEstimator = QuotaEstimator(fileURL: QuotaEstimator.defaultCalibrationURL)
+        self.runningAgentDetector = RunningAgentDetector()
         self.bridgeInstaller = StatusLineBridgeInstaller(cliConfigDirectory: cliConfigDirectory)
         self.silentSyncer = SilentCLISyncer(snapshotURL: bridgeInstaller.snapshotURL, evaluator: quotaEvaluator)
         self.updateChecker = UpdateChecker()
@@ -185,6 +193,7 @@ final class UsageMonitorStore {
         ExchangeRates.shared.refreshIfStale()
         refreshNow()
         startTimer()
+        startAgentPollTimer()
         startSnapshotWatcher()
         startWakeObserver()
 
@@ -409,6 +418,7 @@ final class UsageMonitorStore {
         let agg = aggregator
         let evaluator = quotaEvaluator
         let estimator = quotaEstimator
+        let agentDetector = runningAgentDetector
         let installer = bridgeInstaller
         let billingDay = preferences.billingDay > 0 ? preferences.billingDay : nil
         let savedPriorCost = preferences.savedFullWeekCostUSD > 0 ? preferences.savedFullWeekCostUSD : nil
@@ -466,13 +476,21 @@ final class UsageMonitorStore {
                     )
                 }()
                 let procs = Self.detectRunningProcesses(excluding: selfPid)
+                let desktopAlive = procs.contains { $0.name == "Antigravity" }
+                let cliAlive = procs.contains { $0.name == "agy CLI" }
+                let agents = agentDetector.detect(
+                    desktopProcessAlive: desktopAlive,
+                    cliProcessAlive: cliAlive,
+                    now: now
+                )
                 return RefreshPayload(
                     bridgeStatus: status,
                     cliBinaryPath: cliPath,
                     officialReport: official,
                     localReport: local,
                     weeklyCapacityEstimate: weeklyEstimate,
-                    runningProcesses: procs
+                    runningProcesses: procs,
+                    runningAgents: agents
                 )
             }.value
 
@@ -494,6 +512,8 @@ final class UsageMonitorStore {
                 self.hasLoadedInitialReport = true
             }
             self.runningProcesses = payload.runningProcesses
+            self.runningAgents = payload.runningAgents
+            self.lastAgentDBSignature = Self.agentDatabaseSignature(detector: self.runningAgentDetector)
             ExchangeRates.shared.refreshIfStale()
 
             if payload.officialReport.hasSnapshot,
@@ -549,6 +569,9 @@ final class UsageMonitorStore {
 
     /// Flushes any throttled local ledger mutations immediately (called on app quit / SIGTERM).
     func flushPendingState() {
+        agentPollTimer?.invalidate()
+        agentPollTimer = nil
+        agentPollTask?.cancel()
         retrySyncTask?.cancel()
         if let wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
@@ -1162,6 +1185,64 @@ final class UsageMonitorStore {
                 self?.refreshNow()
             }
         }
+    }
+
+    /// Lightweight 3-second check guarded by `lstat` on SQLite DB/WAL files so the menu bar
+    /// breathing indicator reacts quickly whenever an Antigravity agent starts or finishes.
+    private func startAgentPollTimer() {
+        agentPollTimer?.invalidate()
+        agentPollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.pollRunningAgentsIfNeeded()
+            }
+        }
+    }
+
+    private func pollRunningAgentsIfNeeded() {
+        agentPollTick &+= 1
+        let detector = runningAgentDetector
+        let currentSig = Self.agentDatabaseSignature(detector: detector)
+        let dbChanged = currentSig != lastAgentDBSignature
+        let periodicLiveness = runningAgents.totalCount > 0 && (agentPollTick % 5 == 0)
+        guard dbChanged || periodicLiveness else { return }
+        lastAgentDBSignature = currentSig
+
+        agentPollTask?.cancel()
+        let selfPid = Int32(ProcessInfo.processInfo.processIdentifier)
+        agentPollTask = Task { [weak self] in
+            let (procs, agents) = await Task.detached(priority: .utility) {
+                let procs = Self.detectRunningProcesses(excluding: selfPid)
+                let desktopAlive = procs.contains { $0.name == "Antigravity" }
+                let cliAlive = procs.contains { $0.name == "agy CLI" }
+                let agents = detector.detect(
+                    desktopProcessAlive: desktopAlive,
+                    cliProcessAlive: cliAlive,
+                    now: Date()
+                )
+                return (procs, agents)
+            }.value
+            guard !Task.isCancelled, let self else { return }
+            let countChanged = self.runningAgents.totalCount != agents.totalCount
+            if self.runningAgents != agents {
+                self.runningAgents = agents
+            }
+            if self.runningProcesses != procs {
+                self.runningProcesses = procs
+            }
+            if countChanged {
+                self.onMenuBarUpdate?()
+            }
+        }
+    }
+
+    private nonisolated static func agentDatabaseSignature(detector: RunningAgentDetector) -> String {
+        let paths = [
+            detector.desktopDatabaseURL.path,
+            detector.desktopDatabaseURL.path + "-wal",
+            detector.cliDatabaseURL.path,
+            detector.cliDatabaseURL.path + "-wal",
+        ]
+        return paths.map { fileSignature(atPath: $0) ?? "-" }.joined(separator: "|")
     }
 
     private func startSnapshotWatcher() {

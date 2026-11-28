@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import SQLite3
 import UsageCore
 
 @MainActor
@@ -832,6 +833,55 @@ struct UsageCoreSelfTest {
                 SilentCLISyncer.classifyAuthProbeFailure(logText: "", sawAuthenticatingTimeout: true) == .authRequired,
                 "Authenticating timeout with no keyring token must return authRequired"
             )
+        }
+
+        runner.runCase("RunningAgentDetector: counts top-level running agents, aggregates nested subagents, filters stale/killed/dead") {
+            let fm = FileManager.default
+            let tmp = fm.temporaryDirectory.appendingPathComponent("aum-test-agents-\(UUID().uuidString)", isDirectory: true)
+            try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: tmp) }
+
+            let dbURL = tmp.appendingPathComponent("conversation_summaries.db")
+            var db: OpaquePointer?
+            check(sqlite3_open(dbURL.path, &db) == SQLITE_OK && db != nil, "Should open temp sqlite DB")
+            if let db {
+                defer { sqlite3_close(db) }
+                let sql = """
+                CREATE TABLE conversation_summaries (
+                    conversation_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT '',
+                    nesting_depth INTEGER NOT NULL DEFAULT 0,
+                    parent_conversation_id TEXT NOT NULL DEFAULT '',
+                    killed NUMERIC NOT NULL DEFAULT 0,
+                    last_modified_time DATETIME NOT NULL
+                );
+                INSERT INTO conversation_summaries VALUES ('top-1', 'Main Task A', 'CASCADE_RUN_STATUS_RUNNING', 0, '', 0, '2026-11-28 07:34:08.83818+00:00');
+                INSERT INTO conversation_summaries VALUES ('sub-1', 'Subagent 1', 'CASCADE_RUN_STATUS_RUNNING', 1, 'top-1', 0, '2026-11-28 07:34:10.123456+00:00');
+                INSERT INTO conversation_summaries VALUES ('sub-2', 'Nested Subagent', 'CASCADE_RUN_STATUS_RUNNING', 2, 'sub-1', 0, '2026-11-28 07:34:11.000+00:00');
+                INSERT INTO conversation_summaries VALUES ('top-2', 'Main Task B', 'CASCADE_RUN_STATUS_RUNNING', 0, '', 0, '2026-11-28 07:30:00+00:00');
+                INSERT INTO conversation_summaries VALUES ('killed-1', 'Killed Task', 'CASCADE_RUN_STATUS_RUNNING', 0, '', 1, '2026-11-28 07:34:00+00:00');
+                INSERT INTO conversation_summaries VALUES ('idle-1', 'Idle Task', 'CASCADE_RUN_STATUS_IDLE', 0, '', 0, '2026-11-28 07:34:00+00:00');
+                INSERT INTO conversation_summaries VALUES ('stale-1', 'Crash Leftover', 'CASCADE_RUN_STATUS_RUNNING', 0, '', 0, '2026-11-27 00:00:00+00:00');
+                """
+                check(sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK, "Should populate temp sqlite DB")
+            }
+
+            let now = RunningAgentDetector.parseSQLiteTimestamp("2026-11-28 07:35:00.000+00:00")!
+            let detector = RunningAgentDetector(
+                desktopDatabaseURL: dbURL,
+                cliDatabaseURL: tmp.appendingPathComponent("missing-cli.db")
+            )
+
+            let live = detector.detect(desktopProcessAlive: true, cliProcessAlive: true, now: now)
+            check(live.desktopCount == 2 && live.cliCount == 0 && live.totalCount == 2, "Must count only 2 fresh top-level running agents (got \(live.totalCount))")
+            let top1 = live.desktopAgents.first(where: { $0.id == "top-1" })
+            check(top1?.title == "Main Task A" && top1?.subagentCount == 2, "Multi-level subagents must roll up to top-1 (got \(top1?.subagentCount ?? -1))")
+            let top2 = live.desktopAgents.first(where: { $0.id == "top-2" })
+            check(top2?.subagentCount == 0, "top-2 must have 0 subagents")
+
+            let dead = detector.detect(desktopProcessAlive: false, cliProcessAlive: false, now: now)
+            check(dead.totalCount == 0, "Dead host process must suppress stale DB rows")
         }
 
         print("Summary: \(runner.passed) assertions passed, \(runner.failed) failed.")

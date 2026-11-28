@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import XCTest
 @testable import UsageCore
 
@@ -172,5 +173,48 @@ final class UpgradeRegressionTests: XCTestCase {
         let revoked = #"E1128 browser.go:260] {"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#
         XCTAssertEqual(SilentCLISyncer.classifyAuthProbeFailure(logText: revoked, sawAuthenticatingTimeout: false), .authRequired)
         XCTAssertEqual(SilentCLISyncer.classifyAuthProbeFailure(logText: "", sawAuthenticatingTimeout: true), .authRequired)
+    }
+
+    func testRunningAgentDetectorTopLevelAndSubagentAggregation() throws {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory.appendingPathComponent("xctest-agents-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tmp) }
+
+        let dbURL = tmp.appendingPathComponent("conversation_summaries.db")
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbURL.path, &db), SQLITE_OK)
+        if let db {
+            defer { sqlite3_close(db) }
+            let sql = """
+            CREATE TABLE conversation_summaries (
+                conversation_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT '',
+                nesting_depth INTEGER NOT NULL DEFAULT 0,
+                parent_conversation_id TEXT NOT NULL DEFAULT '',
+                killed NUMERIC NOT NULL DEFAULT 0,
+                last_modified_time DATETIME NOT NULL
+            );
+            INSERT INTO conversation_summaries VALUES ('top-1', 'Main Task A', 'CASCADE_RUN_STATUS_RUNNING', 0, '', 0, '2026-11-28 07:34:08.83818+00:00');
+            INSERT INTO conversation_summaries VALUES ('sub-1', 'Subagent 1', 'CASCADE_RUN_STATUS_RUNNING', 1, 'top-1', 0, '2026-11-28 07:34:10.123456+00:00');
+            INSERT INTO conversation_summaries VALUES ('sub-2', 'Nested Subagent', 'CASCADE_RUN_STATUS_RUNNING', 2, 'sub-1', 0, '2026-11-28 07:34:11.000+00:00');
+            INSERT INTO conversation_summaries VALUES ('top-2', 'Main Task B', 'CASCADE_RUN_STATUS_RUNNING', 0, '', 0, '2026-11-28 07:30:00+00:00');
+            INSERT INTO conversation_summaries VALUES ('killed-1', 'Killed Task', 'CASCADE_RUN_STATUS_RUNNING', 0, '', 1, '2026-11-28 07:34:00+00:00');
+            INSERT INTO conversation_summaries VALUES ('stale-1', 'Crash Leftover', 'CASCADE_RUN_STATUS_RUNNING', 0, '', 0, '2026-11-27 00:00:00+00:00');
+            """
+            XCTAssertEqual(sqlite3_exec(db, sql, nil, nil, nil), SQLITE_OK)
+        }
+
+        let now = try XCTUnwrap(RunningAgentDetector.parseSQLiteTimestamp("2026-11-28 07:35:00.000+00:00"))
+        let detector = RunningAgentDetector(
+            desktopDatabaseURL: dbURL,
+            cliDatabaseURL: tmp.appendingPathComponent("missing-cli.db")
+        )
+        let live = detector.detect(desktopProcessAlive: true, cliProcessAlive: true, now: now)
+        XCTAssertEqual(live.totalCount, 2)
+        XCTAssertEqual(live.desktopAgents.first(where: { $0.id == "top-1" })?.subagentCount, 2)
+        XCTAssertEqual(live.desktopAgents.first(where: { $0.id == "top-2" })?.subagentCount, 0)
+        XCTAssertEqual(detector.detect(desktopProcessAlive: false, cliProcessAlive: false, now: now).totalCount, 0)
     }
 }

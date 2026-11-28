@@ -111,6 +111,9 @@ final class AppPreferences {
         didSet { defaults.set(language.rawValue, forKey: Keys.language) }
     }
 
+    var showRunningAgentsInMenuBar: Bool {
+        didSet { defaults.set(showRunningAgentsInMenuBar, forKey: Keys.showRunningAgents) }
+    }
     var showFiveHourInMenuBar: Bool {
         didSet { defaults.set(showFiveHourInMenuBar, forKey: Keys.showFiveHour) }
     }
@@ -247,6 +250,7 @@ final class AppPreferences {
     private enum Keys {
         static let prefsVersion = "prefs.schemaVersion"
         static let language = "general.language"
+        static let showRunningAgents = "menubar.showRunningAgents"
         static let showFiveHour = "menubar.showFiveHour"
         static let showWeekly = "menubar.showWeekly"
         static let showCacheRate = "menubar.showCacheRate"
@@ -273,6 +277,7 @@ final class AppPreferences {
     init() {
         defaults.register(defaults: [
             Keys.language: AppLanguage.system.rawValue,
+            Keys.showRunningAgents: true,
             Keys.showFiveHour: true,
             Keys.showWeekly: false,
             Keys.showCacheRate: false,
@@ -307,6 +312,7 @@ final class AppPreferences {
         }
 
         self.language = AppLanguage(rawValue: defaults.string(forKey: Keys.language) ?? "") ?? .system
+        self.showRunningAgentsInMenuBar = defaults.bool(forKey: Keys.showRunningAgents)
         self.showFiveHourInMenuBar = defaults.bool(forKey: Keys.showFiveHour)
         self.showWeeklyInMenuBar = defaults.bool(forKey: Keys.showWeekly)
         self.showCacheRateInMenuBar = defaults.bool(forKey: Keys.showCacheRate)
